@@ -762,6 +762,21 @@
       '<button class="btn primary" id="saveBtn">Save settings</button>' +
     '</div>';
 
+    var lastB = null;
+    try { lastB = localStorage.getItem('ecosystem_lastBackup'); } catch (e) {}
+    html += '<h2 class="sec">Backup</h2>';
+    html += '<div class="card">' +
+      '<div style="font-size:12.5px;color:var(--muted);line-height:1.6;">' +
+        (lastB
+          ? 'Everything your Forge apps hold on this phone was last copied to your relay ' +
+            esc(agoText(lastB).replace(/^synced /, '')) + '.'
+          : 'Nothing has been backed up yet. One goes automatically next time you open any of your apps.') +
+      '</div>' +
+      '<button class="btn ghost small" id="backupNowBtn" style="margin-top:10px;">Back up now</button>' +
+      '<button class="btn ghost small" id="restoreBtn" style="margin-top:8px;">Restore from backup</button>' +
+      '<div id="backupOut" style="margin-top:10px;"></div>' +
+    '</div>';
+
     html += '<h2 class="sec">Data</h2>';
     html += '<div class="card">' +
       '<div style="font-size:12.5px;color:var(--muted);line-height:1.6;">' +
@@ -796,6 +811,47 @@
         $('testOut').innerHTML = '<div class="banner ok">Connected. ' + n + ' account' + (n === 1 ? '' : 's') + ' found.</div>';
       }).catch(function (e) {
         $('testOut').innerHTML = '<div class="banner bad">' + esc(e.message || String(e)) + '</div>';
+      });
+    });
+
+    $('backupNowBtn').addEventListener('click', function () {
+      if (!window.ecosystemBackup) { $('backupOut').innerHTML = '<div class="banner bad">Backup isn\'t loaded.</div>'; return; }
+      $('backupOut').innerHTML = '<div class="banner warn">Sending…</div>';
+      window.ecosystemBackup.send().then(function (b) {
+        $('backupOut').innerHTML = '<div class="banner ok">Backed up — ' +
+          Math.round((b.bytes || 0) / 1024) + ' KB stored.</div>';
+      }).catch(function (e) {
+        $('backupOut').innerHTML = '<div class="banner bad">' + esc(e.message || String(e)) + '</div>';
+      });
+    });
+
+    $('restoreBtn').addEventListener('click', function () {
+      $('backupOut').innerHTML = '<div class="banner warn">Fetching your backup…</div>';
+      relayGet('/backup').then(function (snap) {
+        if (!snap || !snap.keys) throw new Error('That backup looks empty.');
+        var count = Object.keys(snap.keys).length;
+        var when = snap.takenAt ? new Date(snap.takenAt).toLocaleString() : 'an unknown time';
+        $('backupOut').innerHTML = '';
+        $('sheet').innerHTML =
+          '<h3>Restore this backup?</h3>' +
+          '<div class="sub">Taken ' + esc(when) + ', holding ' + count + ' saved items across your apps.' +
+          '<br><br>This replaces what\'s on this phone now with what was saved then. ' +
+          'Anything logged since that backup would be lost.</div>' +
+          '<button class="btn primary" id="confirmRestore">Yes, restore it</button>' +
+          '<button class="btn ghost small" id="cancelRestore" style="margin-top:9px;">Cancel</button>';
+        $('scrim').classList.add('open');
+        $('confirmRestore').addEventListener('click', function () {
+          var written = 0;
+          Object.keys(snap.keys).forEach(function (k) {
+            try { localStorage.setItem(k, snap.keys[k]); written++; } catch (e) {}
+          });
+          $('scrim').classList.remove('open');
+          toast('Restored ' + written + ' items');
+          setTimeout(function () { location.reload(); }, 900);
+        });
+        $('cancelRestore').addEventListener('click', function () { $('scrim').classList.remove('open'); });
+      }).catch(function (e) {
+        $('backupOut').innerHTML = '<div class="banner bad">' + esc(e.message || String(e)) + '</div>';
       });
     });
 
@@ -856,6 +912,103 @@
   }
 
   boot();
+})();
+</script>
+<!-- ============================================================
+     ECOSYSTEM AUTO-BACKUP
+     Paste this block just before </body> in every Forge app.
+     It is identical in all of them.
+
+     Once a day, whichever app you happen to open takes a copy of
+     everything all the apps have stored on this phone and sends it
+     to your own Cloudflare relay. Nothing to remember, nothing to tap.
+
+     It reads the relay address and password from Forge Finance's
+     settings, so you only ever set those up once.
+
+     If the relay isn't set up, or the phone is offline, or anything
+     at all goes wrong, it gives up quietly. A backup must never be
+     the reason an app misbehaves.
+     ============================================================ -->
+<script>
+(function () {
+  "use strict";
+
+  var EVERY_HOURS = 24;
+  var STAMP_KEY = 'ecosystem_lastBackup';
+  var SETTINGS_KEY = 'finance_settings';
+
+  function relay() {
+    try {
+      var s = JSON.parse(localStorage.getItem(SETTINGS_KEY) || 'null');
+      if (!s || !s.relayUrl || !s.relayKey) return null;
+      var base = String(s.relayUrl).trim().replace(/\/+$/, '');
+      if (!/^https?:\/\//i.test(base)) base = 'https://' + base;
+      return { base: base, key: s.relayKey };
+    } catch (e) { return null; }
+  }
+
+  function due() {
+    try {
+      var last = localStorage.getItem(STAMP_KEY);
+      if (!last) return true;
+      var age = Date.now() - new Date(last).getTime();
+      return !(age >= 0) || age > EVERY_HOURS * 3600000;
+    } catch (e) { return false; }
+  }
+
+  // Everything every app has stored here, exactly as stored.
+  function snapshot() {
+    var keys = {};
+    try {
+      for (var i = 0; i < localStorage.length; i++) {
+        var k = localStorage.key(i);
+        if (!k || k === STAMP_KEY) continue;
+        keys[k] = localStorage.getItem(k);
+      }
+    } catch (e) {}
+    return {
+      v: 1,
+      takenAt: new Date().toISOString(),
+      takenBy: document.title || location.pathname,
+      origin: location.origin,
+      keys: keys
+    };
+  }
+
+  // Send one now. Returns a promise so a Back up now button can report back.
+  function send() {
+    var r = relay();
+    if (!r) return Promise.reject(new Error('No relay set up yet — add it in Forge Finance settings.'));
+    var snap = snapshot();
+    if (!Object.keys(snap.keys).length) return Promise.reject(new Error('Nothing stored to back up.'));
+
+    return fetch(r.base + '/backup', {
+      method: 'POST',
+      headers: { 'X-Relay-Key': r.key, 'Content-Type': 'application/json' },
+      body: JSON.stringify(snap)
+    }).then(function (res) {
+      return res.json().catch(function () { return {}; }).then(function (body) {
+        if (!res.ok) throw new Error(body.error || ('Relay returned ' + res.status));
+        try { localStorage.setItem(STAMP_KEY, new Date().toISOString()); } catch (e) {}
+        return body;
+      });
+    });
+  }
+
+  // The automatic one: quiet, and only when it's due.
+  function run() {
+    if (!relay() || !due()) return;
+    send().catch(function () { /* offline or relay down - try again tomorrow */ });
+  }
+
+  // So an app's settings screen can offer "Back up now".
+  window.ecosystemBackup = { send: send, snapshot: snapshot, relay: relay, stampKey: STAMP_KEY };
+
+  // Well after the app has finished starting up, so it never competes.
+  function start() { setTimeout(run, 3000); }
+  if (document.readyState === 'complete') start();
+  else window.addEventListener('load', start);
 })();
 </script>
 </body>
