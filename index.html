@@ -318,11 +318,25 @@
   }
 
   /* ---- working out what a transaction was for ---- */
-  // Turn "COUNTDOWN ROLLESTON 4821 CHCH" into something we can match on.
+  // Bank statement lines are full of padding — "POS W/D", "VISA PURCHASE",
+  // card numbers, reference numbers. Strip all that out so what's left is
+  // the actual shop name, which is the thing worth remembering.
+  var NOISE = /^(POS|WD|W|D|EFTPOS|VISA|MASTERCARD|MC|CARD|PURCHASE|PAYMENT|PMT|DEBIT|CREDIT|DIRECT|AUTOMATIC|AUTO|TFR|TRANSFER|ONLINE|INTERNET|BILL|DD|AP|SO|TO|FROM|REF|NZ|LTD|LIMITED|PTY|THE)$/;
+
   function txKey(t) {
     if (t.merchant && t.merchant.name) return t.merchant.name.toUpperCase();
-    var d = String(t.description || '').toUpperCase().replace(/[^A-Z ]/g, ' ').replace(/\s+/g, ' ').trim();
-    return d.split(' ').slice(0, 3).join(' ');
+    var words = String(t.description || '')
+      .toUpperCase()
+      .replace(/[^A-Z0-9 ]/g, ' ')
+      .split(/\s+/)
+      .filter(function (w) {
+        if (!w || w.length < 2) return false;
+        if (NOISE.test(w)) return false;
+        if (/^\d+$/.test(w)) return false;          // card / reference numbers
+        if (/^X+\d*$/.test(w)) return false;        // masked card digits
+        return true;
+      });
+    return words.slice(0, 3).join(' ') || 'OTHER';
   }
   function categoryOf(t) {
     var key = txKey(t);
@@ -381,15 +395,32 @@
 
   /* ---- talking to your relay ---- */
   function relayGet(path) {
-    var base = (settings.relayUrl || '').replace(/\/+$/, '');
+    var base = (settings.relayUrl || '').trim().replace(/\/+$/, '');
     if (!base) return Promise.reject(new Error('No relay address set.'));
+    // People paste the address without https:// — without it the browser
+    // treats it as a folder on this site and we get a web page back.
+    if (!/^https?:\/\//i.test(base)) base = 'https://' + base;
+
     return fetch(base + path, { headers: { 'X-Relay-Key': settings.relayKey || '' }, cache: 'no-store' })
       .then(function (r) {
-        return r.json().catch(function () { throw new Error('Relay sent something unreadable.'); })
-          .then(function (body) {
-            if (!r.ok) throw new Error(body && body.error ? body.error : ('Relay returned ' + r.status));
-            return body;
-          });
+        return r.text().then(function (text) {
+          var body;
+          try { body = JSON.parse(text); }
+          catch (e) {
+            if (/^\s*</.test(text)) {
+              throw new Error('That address gave back a web page, not data. It should start with https:// and end in .workers.dev');
+            }
+            throw new Error('Unreadable reply from the relay (status ' + r.status + ').');
+          }
+          if (!r.ok) throw new Error(body && body.error ? body.error : ('Relay returned ' + r.status));
+          return body;
+        });
+      })
+      .catch(function (e) {
+        if (e instanceof TypeError) {
+          throw new Error('Could not reach that address at all. Check the worker is deployed and the address is right.');
+        }
+        throw e;
       });
   }
 
@@ -554,11 +585,14 @@
       }).join('');
       html += '</div>';
       if (t.byCat['Uncategorised']) {
-        html += '<div class="banner warn">Some spending is still uncategorised. Tap those items under ' +
-                '<b>Activity</b> to sort them — it remembers each one for next time.</div>';
+        var n = uncategorisedGroups().length;
+        html += '<div class="banner warn">' + money(t.byCat['Uncategorised']) + ' still uncategorised' +
+                (n ? ', across ' + n + (n === 1 ? ' shop' : ' different shops') : '') + '.</div>' +
+                '<button class="btn primary" id="tidyBtn">Sort them out</button>';
       }
     }
     el.innerHTML = html;
+    if ($('tidyBtn')) $('tidyBtn').addEventListener('click', openTidySheet);
   }
 
   function renderActivity() {
@@ -575,6 +609,11 @@
     }
 
     var html = '';
+    var ug = uncategorisedGroups();
+    if (ug.length) {
+      html += '<button class="btn ghost small" id="tidyBtn2" style="margin-bottom:14px;">' +
+              'Sort out ' + ug.length + ' uncategorised ' + (ug.length === 1 ? 'shop' : 'shops') + '</button>';
+    }
     var lastDay = '';
     list.slice(0, 300).forEach(function (t, i) {
       var d = new Date(t.date);
@@ -591,7 +630,8 @@
     });
     el.innerHTML = html;
 
-    Array.prototype.forEach.call(el.querySelectorAll('.tx'), function (row) {
+    if ($('tidyBtn2')) $('tidyBtn2').addEventListener('click', openTidySheet);
+    Array.prototype.forEach.call(el.querySelectorAll('.tx[data-i]'), function (row) {
       row.addEventListener('click', function () { openCategorySheet(list[Number(row.dataset.i)]); });
     });
   }
@@ -622,6 +662,71 @@
       });
     });
     $('closeSheet').addEventListener('click', function () { $('scrim').classList.remove('open'); });
+  }
+
+  /* ---- sorting out everything still uncategorised, shop by shop ---- */
+  function uncategorisedGroups() {
+    var groups = {};
+    (cache.transactions || []).forEach(function (t) {
+      if (Number(t.amount) >= 0) return;                 // money in isn't spending
+      if (categoryOf(t) !== 'Uncategorised') return;
+      var k = txKey(t);
+      if (!groups[k]) groups[k] = { key: k, name: (t.merchant && t.merchant.name) || k, count: 0, total: 0 };
+      groups[k].count++;
+      groups[k].total += Math.abs(Number(t.amount) || 0);
+    });
+    return Object.keys(groups).map(function (k) { return groups[k]; })
+      .sort(function (a, b) { return b.total - a.total; });
+  }
+
+  function openTidySheet() {
+    var groups = uncategorisedGroups();
+    if (!groups.length) {
+      $('sheet').innerHTML = '<h3>All sorted</h3><div class="sub">Nothing left uncategorised.</div>' +
+        '<button class="btn ghost small" id="closeSheet">Close</button>';
+      $('scrim').classList.add('open');
+      $('closeSheet').addEventListener('click', function () { $('scrim').classList.remove('open'); render(); });
+      return;
+    }
+    $('sheet').innerHTML =
+      '<h3>' + groups.length + ' to sort</h3>' +
+      '<div class="sub">Biggest first. Pick a category once and every transaction from that shop is sorted — ' +
+        'the ones already here and anything that turns up later.</div>' +
+      groups.map(function (g, i) {
+        return '<div class="tx" data-g="' + i + '">' +
+                 '<div class="ti"><div class="tn">' + esc(g.name) + '</div>' +
+                   '<div class="tc">' + g.count + (g.count === 1 ? ' transaction' : ' transactions') + '</div></div>' +
+                 '<div class="ta">' + money(g.total) + '</div>' +
+               '</div>';
+      }).join('') +
+      '<button class="btn ghost small" id="closeSheet" style="margin-top:14px;">Done for now</button>';
+    $('scrim').classList.add('open');
+
+    Array.prototype.forEach.call($('sheet').querySelectorAll('[data-g]'), function (row) {
+      row.addEventListener('click', function () { tidyPick(groups[Number(row.dataset.g)]); });
+    });
+    $('closeSheet').addEventListener('click', function () { $('scrim').classList.remove('open'); render(); });
+  }
+
+  function tidyPick(g) {
+    $('sheet').innerHTML =
+      '<h3>' + esc(g.name) + '</h3>' +
+      '<div class="sub">' + g.count + (g.count === 1 ? ' transaction · ' : ' transactions · ') + money(g.total) +
+        '<br>Whatever you pick applies to all of them.</div>' +
+      '<div class="catgrid">' +
+        CATEGORIES.map(function (c) { return '<button data-cat="' + esc(c) + '">' + esc(c) + '</button>'; }).join('') +
+      '</div>' +
+      '<button class="btn ghost small" id="backTidy" style="margin-top:14px;">Back</button>';
+
+    Array.prototype.forEach.call($('sheet').querySelectorAll('[data-cat]'), function (b) {
+      b.addEventListener('click', function () {
+        rules[g.key] = b.dataset.cat;
+        store.set('rules', rules);
+        publishSummary();
+        openTidySheet();                                  // back to the list, one shorter
+      });
+    });
+    $('backTidy').addEventListener('click', openTidySheet);
   }
 
   function renderSettings() {
