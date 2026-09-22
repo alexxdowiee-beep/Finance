@@ -305,16 +305,36 @@
       }
     }
     var s = new Date(); s.setDate(1); s.setHours(0,0,0,0);
-    return { start: s, end: now, label: 'this month', nextLabel: null };
+    // The period ends when the MONTH ends, not today — "days to go" and the
+    // projection both count from here, and there are no future transactions
+    // to sweep up anyway.
+    var e = new Date(s.getFullYear(), s.getMonth() + 1, 0, 23, 59, 59, 999);
+    return { start: s, end: e, label: 'this month', nextLabel: null };
   }
   function prevRange(r) {
-    var span = r.end.getTime() - r.start.getTime();
     if (settings.period === 'fortnight' && settings.anchor) {
       return { start: new Date(r.start.getTime() - 14*86400000), end: new Date(r.start.getTime() - 1) };
     }
     var s = new Date(r.start); s.setMonth(s.getMonth() - 1);
     var e = new Date(r.start.getTime() - 1);
     return { start: s, end: e };
+  }
+
+  // The same distance into the LAST period as we are into this one.
+  // Comparing three days of this month against a whole previous month
+  // flatters you early and scolds you late — this compares like with like.
+  function prevSoFar(r) {
+    var elapsed = Date.now() - r.start.getTime();
+    var prev = prevRange(r);
+    var end = new Date(Math.min(prev.start.getTime() + elapsed, prev.end.getTime()));
+    return { start: prev.start, end: end };
+  }
+
+  function daysLeftIn(r) {
+    return Math.max(0, Math.ceil((r.end.getTime() - Date.now()) / 86400000));
+  }
+  function daysElapsedIn(r) {
+    return Math.max(1, Math.ceil((Date.now() - r.start.getTime()) / 86400000));
   }
 
   /* ---- working out what a transaction was for ---- */
@@ -463,6 +483,7 @@
         headline: money(t.out) + ' spent ' + r.label,
         data: {
           periodLabel: r.label,
+          daysLeftInPeriod: daysLeftIn(r),
           spentThisPeriod: Math.round(t.out),
           incomeThisPeriod: Math.round(t.income),
           netPositionNzd: np === null ? null : Math.round(np),
@@ -499,9 +520,20 @@
 
     var r = periodRange();
     var t = totals(txInRange(r));
-    var pt = totals(txInRange(prevRange(r)));
+    var pSoFar = totals(txInRange(prevSoFar(r)));
     var np = netPosition();
-    var diff = pt.out ? Math.round((t.out - pt.out) / pt.out * 100) : null;
+    var ad = assetsAndDebt();
+
+    var left = daysLeftIn(r);
+    var elapsed = daysElapsedIn(r);
+    var perDay = t.out / elapsed;
+    var projected = t.out + perDay * left;
+
+    // If pay has landed in this period, what's left of it is the number
+    // worth waking up to. If it hasn't, fall back to what's gone out.
+    var hasIncome = t.income > 0;
+    var heroVal = hasIncome ? (t.income - t.out) : t.out;
+    var periodWord = settings.period === 'fortnight' ? 'fortnight' : 'month';
 
     var html = '';
     if (lastError) {
@@ -511,26 +543,46 @@
       html += '<div class="banner warn">No data yet — tap Update below to pull it in.</div>';
     }
 
-    var ad = assetsAndDebt();
     html += '<div class="card hero">' +
-              '<div class="lbl">Net position</div>' +
-              '<div class="big' + (np !== null && np < 0 ? ' neg' : '') + '">' + (np === null ? '–' : money(np)) + '</div>' +
+              '<div class="lbl">' + (hasIncome
+                ? 'Left of this ' + esc(periodWord) + '’s pay'
+                : 'Spent ' + esc(r.label)) + '</div>' +
+              '<div class="big' + (heroVal < 0 ? ' neg' : '') + '">' + money(heroVal) + '</div>' +
               '<div class="note">' +
-                (np === null ? '' : money(ad.assets) + ' held' + (ad.debt ? ' · ' + money(ad.debt) + ' owing' : '') + '<br>') +
-                (cache.accounts || []).length + ' accounts · ' + esc(agoText(cache.syncedAt)) +
+                (hasIncome ? money(t.out) + ' spent of ' + money(t.income) + '<br>' : '') +
+                (left > 0
+                  ? left + (left === 1 ? ' day to go' : ' days to go') +
+                    (r.nextLabel ? ' · ' + esc(r.nextLabel) : '')
+                  : 'last day of the ' + esc(periodWord)) +
               '</div>' +
             '</div>';
 
-    html += '<div class="split">' +
-              '<div class="stat"><div class="v out">' + money(t.out) + '</div><div class="l">Spent ' + esc(r.label) + '</div></div>' +
-              '<div class="stat"><div class="v in">' + money(t.income) + '</div><div class="l">In ' + esc(r.label) + '</div></div>' +
-            '</div>';
-
-    if (diff !== null) {
-      html += '<div class="banner ' + (diff <= 0 ? 'ok' : 'warn') + '" style="margin-top:12px;">' +
-              (diff <= 0 ? 'Down ' : 'Up ') + Math.abs(diff) + '% on the previous ' +
-              (settings.period === 'fortnight' ? 'fortnight' : 'month') + ' (' + money(pt.out) + ').</div>';
+    if (t.out > 0) {
+      html += '<div class="split">' +
+                '<div class="stat"><div class="v out">' + money(perDay) + '</div><div class="l">a day so far</div></div>' +
+                '<div class="stat"><div class="v">' + money(projected) + '</div><div class="l">at this rate by ' +
+                  esc(r.end.toLocaleDateString(undefined, { day: 'numeric', month: 'short' })) + '</div></div>' +
+              '</div>';
     }
+
+    // Like for like: same point last period, not a whole finished one.
+    if (pSoFar.out > 0) {
+      var diff = Math.round((t.out - pSoFar.out) / pSoFar.out * 100);
+      html += '<div class="banner ' + (diff <= 0 ? 'ok' : 'warn') + '" style="margin-top:12px;">' +
+              (diff === 0 ? 'Level with' : (diff < 0 ? 'Down ' + Math.abs(diff) + '% on' : 'Up ' + diff + '% on')) +
+              ' the same point last ' + esc(periodWord) + ' (' + money(pSoFar.out) + ' by now).</div>';
+    }
+
+    html += '<div class="card" style="display:flex;justify-content:space-between;align-items:center;gap:12px;">' +
+              '<div><div style="font-size:11px;color:var(--muted);font-weight:700;text-transform:uppercase;letter-spacing:0.06em;">Net position</div>' +
+                '<div style="font-size:11.5px;color:var(--faint);margin-top:3px;">' +
+                  (np === null ? esc(agoText(cache.syncedAt))
+                               : money(ad.assets) + ' held' + (ad.debt ? ' · ' + money(ad.debt) + ' owing' : '')) +
+                '</div></div>' +
+              '<div style="font-family:var(--font-display);font-size:19px;font-variant-numeric:tabular-nums;' +
+                (np !== null && np < 0 ? 'color:var(--danger);' : '') + '">' +
+                (np === null ? '–' : money(np)) + '</div>' +
+            '</div>';
 
     html += '<h2 class="sec">Accounts</h2><div class="card">';
     if (!(cache.accounts || []).length) {
@@ -1005,20 +1057,8 @@
   // So an app's settings screen can offer "Back up now".
   window.ecosystemBackup = { send: send, snapshot: snapshot, relay: relay, stampKey: STAMP_KEY };
 
-  // Ask Android not to evict this app's data when the phone is short on
-  // space. Silently ignored where it isn't supported. Harmless either way.
-  function askToKeepData() {
-    try {
-      if (navigator.storage && navigator.storage.persist && navigator.storage.persisted) {
-        navigator.storage.persisted().then(function (already) {
-          if (!already) navigator.storage.persist().catch(function () {});
-        }).catch(function () {});
-      }
-    } catch (e) {}
-  }
-
   // Well after the app has finished starting up, so it never competes.
-  function start() { askToKeepData(); setTimeout(run, 3000); }
+  function start() { setTimeout(run, 3000); }
   if (document.readyState === 'complete') start();
   else window.addEventListener('load', start);
 })();
