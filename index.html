@@ -1,0 +1,757 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1">
+<title>Forge Finance</title>
+<meta name="theme-color" content="#0A0A0B">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Forge Finance">
+<link rel="manifest" href="manifest.json">
+<link rel="apple-touch-icon" href="icon-192.png">
+<link rel="icon" href="icon-192.png">
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Anton&family=Archivo:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+
+<style>
+  :root {
+    --bg: #0A0A0B; --surface: #141416; --surface2: #1D1E21;
+    --ink: #F5F5F6; --muted: #8C8D92; --faint: #4E5054; --line: #26272B;
+    --brand: #FF4A16; --brand-ink: #120B07; --gold: #F0B429;
+    --good: #5FBF6E; --danger: #E5484D;
+    --font-display: 'Anton', 'Arial Narrow', sans-serif;
+    --font-body: 'Archivo', -apple-system, BlinkMacSystemFont, sans-serif;
+    color-scheme: dark;
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { margin:0; padding:0; height:100%; }
+  body { background: var(--bg); color: var(--ink); font-family: var(--font-body); }
+  ::-webkit-scrollbar { display:none; }
+  .app { max-width: 520px; margin:0 auto; min-height:100%; display:flex; flex-direction:column; }
+
+  header.topbar {
+    position:sticky; top:0; z-index:20; background: var(--bg);
+    padding: calc(env(safe-area-inset-top,0px) + 14px) 18px 12px;
+    border-bottom: 2px solid var(--brand);
+    display:flex; align-items:center; justify-content:space-between; gap:10px;
+  }
+  .brand { display:flex; align-items:center; gap:9px; }
+  .brand svg { width:24px; height:24px; flex-shrink:0; }
+  .brand .wordmark { font-size:18px; letter-spacing:0.2em; text-transform:uppercase; font-weight:700; }
+  .topbar .sub { font-size:11px; color:var(--muted); font-weight:700; text-align:right; line-height:1.3; }
+
+  main { flex:1; padding:16px 18px 92px; }
+  .screen { display:none; }
+  .screen.active { display:block; animation: fade .16s ease-out; }
+  @keyframes fade { from{opacity:0;transform:translateY(5px);} to{opacity:1;transform:none;} }
+
+  h2.sec { font-family: var(--font-display); font-weight:400; font-size:13px; text-transform:uppercase;
+           letter-spacing:0.08em; color: var(--muted); margin:24px 0 9px; }
+  h2.sec:first-child { margin-top:0; }
+
+  .card { background: var(--surface); border:1px solid var(--line); border-radius:15px; padding:16px; margin-bottom:12px; }
+
+  .hero { text-align:center; padding:22px 16px; }
+  .hero .lbl { font-size:10.5px; color:var(--muted); font-weight:700; text-transform:uppercase; letter-spacing:0.08em; }
+  .hero .big { font-family: var(--font-display); font-size:38px; line-height:1.1; margin-top:6px; font-variant-numeric: tabular-nums; }
+  .hero .big.neg { color: var(--danger); }
+  .hero .note { font-size:11.5px; color:var(--faint); margin-top:7px; }
+
+  .split { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+  .stat { background: var(--surface); border:1px solid var(--line); border-radius:13px; padding:14px 12px; text-align:center; }
+  .stat .v { font-family: var(--font-display); font-size:22px; font-variant-numeric: tabular-nums; }
+  .stat .v.out { color: var(--brand); }
+  .stat .v.in { color: var(--good); }
+  .stat .l { font-size:9.5px; color:var(--muted); font-weight:700; text-transform:uppercase; letter-spacing:0.05em; margin-top:3px; }
+
+  .acct { display:flex; align-items:center; gap:12px; padding:12px 0; border-bottom:1px solid var(--line); }
+  .acct:last-child { border-bottom:none; }
+  .acct .an { flex:1; min-width:0; }
+  .acct .an .n { font-size:14px; font-weight:600; }
+  .acct .an .b { font-size:11px; color:var(--faint); margin-top:2px; }
+  .acct .bal { font-family: var(--font-display); font-size:17px; font-variant-numeric: tabular-nums; }
+  .acct .bal.neg { color: var(--danger); }
+
+  .catrow { margin-bottom:13px; }
+  .catrow:last-child { margin-bottom:0; }
+  .catrow .top { display:flex; justify-content:space-between; align-items:baseline; margin-bottom:5px; gap:10px; }
+  .catrow .cn { font-size:13px; }
+  .catrow .cv { font-family: var(--font-display); font-size:15px; font-variant-numeric: tabular-nums; }
+  .catrow .cp { font-size:10.5px; color:var(--faint); margin-left:6px; font-family: var(--font-body); font-weight:700; }
+  .track { height:7px; background: var(--surface2); border-radius:4px; overflow:hidden; }
+  .fill { height:100%; background: var(--brand); border-radius:4px; }
+
+  .tx { display:flex; align-items:center; gap:11px; padding:12px 2px; border-bottom:1px solid var(--line); cursor:pointer; }
+  .tx:last-child { border-bottom:none; }
+  .tx .ti { flex:1; min-width:0; }
+  .tx .tn { font-size:13.5px; font-weight:600; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .tx .tc { font-size:10.5px; color:var(--muted); margin-top:3px; }
+  .tx .tc .chip { background: var(--surface2); border:1px solid var(--line); border-radius:20px; padding:2px 7px; font-weight:700; }
+  .tx .tc .chip.none { color: var(--gold); border-color: var(--gold); }
+  .tx .ta { font-family: var(--font-display); font-size:15px; font-variant-numeric: tabular-nums; white-space:nowrap; }
+  .tx .ta.in { color: var(--good); }
+  .daylbl { font-size:11px; color:var(--faint); font-weight:700; text-transform:uppercase; letter-spacing:0.06em; margin:18px 0 2px; }
+  .daylbl:first-child { margin-top:0; }
+
+  .field { margin-bottom:14px; }
+  .field label { display:block; font-size:10.5px; color:var(--muted); font-weight:700; text-transform:uppercase; letter-spacing:0.05em; margin-bottom:5px; }
+  .field .hint { font-size:11px; color:var(--faint); margin-top:5px; line-height:1.5; }
+  input[type=text], input[type=password], input[type=date], input[type=number], select {
+    width:100%; background: var(--surface2); border:1px solid var(--line); color: var(--ink);
+    font-family: inherit; font-size:14px; padding:11px 12px; border-radius:10px;
+  }
+  input:focus, select:focus { outline:2px solid var(--brand); outline-offset:-1px; }
+
+  .btn { border:none; border-radius:13px; padding:14px 18px; font-size:15px; cursor:pointer; width:100%;
+         font-family: var(--font-display); font-weight:400; letter-spacing:0.08em; text-transform:uppercase; }
+  .btn.primary { background: var(--brand); color: var(--brand-ink); }
+  .btn.ghost { background: var(--surface2); border:1px solid var(--line); color: var(--ink); }
+  .btn.small { font-family: var(--font-body); font-weight:700; font-size:12.5px; letter-spacing:0; text-transform:none; padding:10px 14px; border-radius:10px; }
+  .btn:active { transform: scale(0.985); }
+  .btn.danger { background:none; color: var(--danger); text-decoration:underline; font-family: var(--font-body);
+                text-transform:none; letter-spacing:0; font-weight:700; font-size:13px; padding:8px; }
+
+  .seg { display:flex; gap:7px; }
+  .seg button { flex:1; background: var(--surface2); border:1px solid var(--line); color: var(--muted);
+                border-radius:10px; padding:11px 6px; font-size:13px; font-weight:700; font-family:inherit; cursor:pointer; }
+  .seg button.on { background: var(--brand); border-color: var(--brand); color: var(--brand-ink); }
+
+  .banner { border-radius:11px; padding:12px 14px; font-size:12.5px; line-height:1.5; margin-bottom:14px; }
+  .banner.warn { background: rgba(240,180,41,0.1); border:1px dashed var(--gold); color: var(--gold); }
+  .banner.bad { background: rgba(229,72,77,0.1); border:1px dashed var(--danger); color: var(--danger); }
+  .banner.ok { background: rgba(95,191,110,0.1); border:1px dashed var(--good); color: var(--good); }
+
+  .empty { text-align:center; padding:40px 12px; color: var(--muted); font-size:13.5px; line-height:1.6; }
+
+  nav.tabbar { position:fixed; left:50%; transform:translateX(-50%); bottom:0; width:100%; max-width:520px; z-index:30;
+    background: var(--surface); border-top:1px solid var(--line); padding-bottom: env(safe-area-inset-bottom,0px); display:flex; }
+  .tab { flex:1; border:none; background:none; padding:11px 3px 9px; display:flex; flex-direction:column;
+         align-items:center; gap:3px; color: var(--faint); cursor:pointer; font-family: var(--font-body); }
+  .tab.active { color: var(--brand); }
+  .tab .ic { font-size:16px; }
+  .tab .lb { font-size:9.5px; font-weight:700; }
+
+  .scrim { position:fixed; inset:0; background: rgba(6,7,8,0.82); z-index:50; display:none; align-items:flex-end; }
+  .scrim.open { display:flex; }
+  .sheet { background: var(--surface); width:100%; max-width:520px; margin:0 auto; border-radius:20px 20px 0 0;
+           border-top:2px solid var(--brand); padding:20px 20px calc(env(safe-area-inset-bottom,0px)+24px); max-height:82vh; overflow-y:auto; }
+  .sheet h3 { font-family: var(--font-display); font-weight:400; font-size:17px; text-transform:uppercase;
+              letter-spacing:0.05em; margin:0 0 4px; }
+  .sheet .sub { font-size:12px; color: var(--muted); margin-bottom:16px; }
+  .catgrid { display:grid; grid-template-columns:1fr 1fr; gap:7px; }
+  .catgrid button { background: var(--surface2); border:1px solid var(--line); color: var(--ink);
+                    border-radius:10px; padding:12px 8px; font-size:13px; font-family:inherit; cursor:pointer; text-align:left; }
+  .catgrid button.on { background: var(--brand); border-color: var(--brand); color: var(--brand-ink); font-weight:700; }
+
+  .toast { position:fixed; left:50%; transform:translateX(-50%); bottom: calc(env(safe-area-inset-bottom,0px) + 78px);
+           background: var(--ink); color: var(--bg); font-size:12.5px; font-weight:700; padding:10px 18px;
+           border-radius:999px; z-index:60; opacity:0; pointer-events:none; transition: opacity .25s, bottom .25s; }
+  .toast.show { opacity:1; bottom: calc(env(safe-area-inset-bottom,0px) + 94px); }
+</style>
+</head>
+<body>
+<div class="app">
+  <header class="topbar">
+    <span class="brand">
+      <svg viewBox="0 0 40 40" aria-hidden="true">
+        <g fill="none" stroke="var(--brand)" stroke-linecap="round">
+          <path d="M20 3.5 A16.5 16.5 0 0 1 35.6 14.6" stroke-width="4.2"/>
+          <path d="M36.2 20.8 A16.5 16.5 0 0 1 24.6 35.9" stroke-width="3.4"/>
+          <path d="M17.2 36.2 A16.5 16.5 0 0 1 4.3 25.4" stroke-width="4"/>
+          <path d="M4.1 17.4 A16.5 16.5 0 0 1 10.6 6.9" stroke-width="2.8"/>
+        </g>
+        <rect x="11" y="21" width="4.6" height="9" rx="1.4" fill="var(--ink)"/>
+        <rect x="17.7" y="16" width="4.6" height="14" rx="1.4" fill="var(--ink)"/>
+        <rect x="24.4" y="10.5" width="4.6" height="19.5" rx="1.4" fill="var(--brand)"/>
+      </svg>
+      <span class="wordmark">Finance</span>
+    </span>
+    <span class="sub" id="topSub"></span>
+  </header>
+
+  <main>
+    <section class="screen active" id="screen-overview"></section>
+    <section class="screen" id="screen-spending"></section>
+    <section class="screen" id="screen-activity"></section>
+    <section class="screen" id="screen-settings"></section>
+  </main>
+
+  <nav class="tabbar">
+    <button class="tab active" data-screen="overview"><span class="ic">&#9673;</span><span class="lb">Overview</span></button>
+    <button class="tab" data-screen="spending"><span class="ic">&#9650;</span><span class="lb">Spending</span></button>
+    <button class="tab" data-screen="activity"><span class="ic">&#8801;</span><span class="lb">Activity</span></button>
+    <button class="tab" data-screen="settings"><span class="ic">&#9881;</span><span class="lb">Settings</span></button>
+  </nav>
+</div>
+
+<div class="scrim" id="scrim"><div class="sheet" id="sheet"></div></div>
+<div class="toast" id="toast"></div>
+
+<script>
+(function () {
+  "use strict";
+
+  /* ============================================================
+     FORGE FINANCE
+     Data comes from your Akahu account through your own Cloudflare
+     relay (see worker.js). Nothing is sent anywhere else — the
+     numbers live in this phone's storage and nowhere on the web.
+     ============================================================ */
+
+  var APP_PREFIX = 'finance_';
+  var SUMMARY_VERSION = 1;
+
+  var CATEGORIES = [
+    'Groceries', 'Eating out', 'Transport', 'Bills & utilities',
+    'Rent & mortgage', 'Insurance', 'Health', 'Shopping',
+    'Entertainment', 'Subscriptions', 'Savings & transfers', 'Income', 'Other'
+  ];
+
+  // Not counted as spending (moving your own money, or money coming in).
+  var NOT_SPEND = { 'Savings & transfers': true, 'Income': true };
+
+  // A head start so the first import isn't all "Uncategorised".
+  // Your own choices are saved on top of these and always win.
+  var SEED_RULES = {
+    'COUNTDOWN': 'Groceries', 'WOOLWORTHS': 'Groceries', 'PAK N SAVE': 'Groceries',
+    'PAKNSAVE': 'Groceries', 'NEW WORLD': 'Groceries', 'FRESH CHOICE': 'Groceries',
+    'FOUR SQUARE': 'Groceries',
+    'Z ENERGY': 'Transport', 'BP ': 'Transport', 'MOBIL': 'Transport', 'CALTEX': 'Transport',
+    'GULL': 'Transport', 'WAITOMO': 'Transport', 'METRO': 'Transport',
+    'MCDONALD': 'Eating out', 'KFC': 'Eating out', 'BURGER': 'Eating out',
+    'SUBWAY': 'Eating out', 'PIZZA': 'Eating out', 'CAFE': 'Eating out',
+    'UBER EATS': 'Eating out', 'COFFEE': 'Eating out', 'BAKERY': 'Eating out',
+    'SPARK': 'Bills & utilities', 'ONE NZ': 'Bills & utilities', 'VODAFONE': 'Bills & utilities',
+    '2DEGREES': 'Bills & utilities', 'MERCURY': 'Bills & utilities', 'GENESIS': 'Bills & utilities',
+    'CONTACT ENERGY': 'Bills & utilities', 'ELECTRIC KIWI': 'Bills & utilities',
+    'MERIDIAN': 'Bills & utilities', 'DISTRICT COUNCIL': 'Bills & utilities',
+    'CITY COUNCIL': 'Bills & utilities',
+    'NETFLIX': 'Subscriptions', 'SPOTIFY': 'Subscriptions', 'DISNEY': 'Subscriptions',
+    'YOUTUBE': 'Subscriptions', 'APPLE.COM': 'Subscriptions', 'GOOGLE': 'Subscriptions',
+    'AA INSURANCE': 'Insurance', 'TOWER': 'Insurance', 'AMI ': 'Insurance', 'STATE INSURANCE': 'Insurance',
+    'PHARMACY': 'Health', 'UNICHEM': 'Health', 'CHEMIST': 'Health', 'MEDICAL': 'Health',
+    'MITRE 10': 'Shopping', 'BUNNINGS': 'Shopping', 'KMART': 'Shopping',
+    'WAREHOUSE': 'Shopping', 'BRISCOES': 'Shopping', 'FARMERS': 'Shopping',
+    // backstop in case the bank doesn't label transfers properly
+    'TRANSFER TO': 'Savings & transfers', 'TRANSFER FROM': 'Savings & transfers',
+    'INTERNET TRANSFER': 'Savings & transfers'
+  };
+
+  var $ = function (id) { return document.getElementById(id); };
+
+  var store = {
+    get: function (k, fb) {
+      try { var v = localStorage.getItem(APP_PREFIX + k); return v ? JSON.parse(v) : fb; }
+      catch (e) { return fb; }
+    },
+    set: function (k, v) {
+      try { localStorage.setItem(APP_PREFIX + k, JSON.stringify(v)); }
+      catch (e) { toast('Could not save — storage may be full'); }
+    }
+  };
+
+  var settings = store.get('settings', { relayUrl: '', relayKey: '', period: 'month', anchor: '', historyDays: 90 });
+  var cache = store.get('cache', { accounts: [], transactions: [], syncedAt: null });
+  var rules = store.get('rules', {});
+  var syncing = false;
+  var lastError = null;
+
+  var toastTimer;
+  function toast(msg) {
+    var t = $('toast'); t.textContent = msg; t.classList.add('show');
+    clearTimeout(toastTimer); toastTimer = setTimeout(function () { t.classList.remove('show'); }, 2300);
+  }
+
+  function esc(s) {
+    return String(s === null || s === undefined ? '' : s).replace(/[&<>"']/g, function (c) {
+      return { '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[c];
+    });
+  }
+
+  function money(n) {
+    if (n === null || n === undefined || isNaN(n)) return '–';
+    try { return Number(n).toLocaleString('en-NZ', { style:'currency', currency:'NZD', maximumFractionDigits: 0 }); }
+    catch (e) { return '$' + Math.round(Number(n)).toLocaleString(); }
+  }
+  function moneyExact(n) {
+    if (n === null || n === undefined || isNaN(n)) return '–';
+    try { return Number(n).toLocaleString('en-NZ', { style:'currency', currency:'NZD' }); }
+    catch (e) { return '$' + Number(n).toFixed(2); }
+  }
+
+  function dstr(d) {
+    var y = d.getFullYear(), m = String(d.getMonth()+1).padStart(2,'0'), a = String(d.getDate()).padStart(2,'0');
+    return y + '-' + m + '-' + a;
+  }
+
+  /* ---- which stretch of time are we looking at ---- */
+  function periodRange() {
+    var now = new Date(); now.setHours(23,59,59,999);
+    if (settings.period === 'fortnight' && settings.anchor) {
+      var anchor = new Date(settings.anchor + 'T00:00:00');
+      if (!isNaN(anchor.getTime())) {
+        var ms = 14 * 86400000;
+        var diff = Date.now() - anchor.getTime();
+        var periodsPassed = Math.floor(diff / ms);
+        var start = new Date(anchor.getTime() + periodsPassed * ms);
+        start.setHours(0,0,0,0);
+        var end = new Date(start.getTime() + ms - 1);
+        return { start: start, end: end, label: 'this fortnight',
+                 nextLabel: 'Next pay ' + new Date(start.getTime() + ms).toLocaleDateString(undefined,{day:'numeric',month:'short'}) };
+      }
+    }
+    var s = new Date(); s.setDate(1); s.setHours(0,0,0,0);
+    return { start: s, end: now, label: 'this month', nextLabel: null };
+  }
+  function prevRange(r) {
+    var span = r.end.getTime() - r.start.getTime();
+    if (settings.period === 'fortnight' && settings.anchor) {
+      return { start: new Date(r.start.getTime() - 14*86400000), end: new Date(r.start.getTime() - 1) };
+    }
+    var s = new Date(r.start); s.setMonth(s.getMonth() - 1);
+    var e = new Date(r.start.getTime() - 1);
+    return { start: s, end: e };
+  }
+
+  /* ---- working out what a transaction was for ---- */
+  // Turn "COUNTDOWN ROLLESTON 4821 CHCH" into something we can match on.
+  function txKey(t) {
+    if (t.merchant && t.merchant.name) return t.merchant.name.toUpperCase();
+    var d = String(t.description || '').toUpperCase().replace(/[^A-Z ]/g, ' ').replace(/\s+/g, ' ').trim();
+    return d.split(' ').slice(0, 3).join(' ');
+  }
+  function categoryOf(t) {
+    var key = txKey(t);
+    if (rules[key]) return rules[key];                      // what you chose before
+    // Moving money between your own accounts isn't spending, and the bank
+    // usually tells us so outright.
+    if (t.type === 'TRANSFER') return 'Savings & transfers';
+    var desc = ((t.description || '') + ' ' + (t.merchant && t.merchant.name || '')).toUpperCase();
+    for (var seed in SEED_RULES) {
+      if (desc.indexOf(seed) !== -1) return SEED_RULES[seed];
+    }
+    if (t.category && t.category.name) return t.category.name;   // Akahu's own, if we get it
+    if (Number(t.amount) > 0) return 'Income';
+    return 'Uncategorised';
+  }
+  function setCategory(t, cat) {
+    rules[txKey(t)] = cat;
+    store.set('rules', rules);
+  }
+
+  function txInRange(r) {
+    return (cache.transactions || []).filter(function (t) {
+      var d = new Date(t.date).getTime();
+      return d >= r.start.getTime() && d <= r.end.getTime();
+    });
+  }
+  function totals(list) {
+    var out = 0, income = 0, byCat = {};
+    list.forEach(function (t) {
+      var amt = Number(t.amount) || 0;
+      var cat = categoryOf(t);
+      if (amt > 0) { if (!NOT_SPEND[cat] || cat === 'Income') income += amt; return; }
+      if (NOT_SPEND[cat]) return;               // own-money moves don't count as spending
+      out += Math.abs(amt);
+      byCat[cat] = (byCat[cat] || 0) + Math.abs(amt);
+    });
+    return { out: out, income: income, byCat: byCat };
+  }
+  function netPosition() {
+    if (!cache.accounts || !cache.accounts.length) return null;
+    return cache.accounts.reduce(function (sum, a) {
+      var v = a.balance && typeof a.balance.current === 'number' ? a.balance.current : 0;
+      return sum + v;
+    }, 0);
+  }
+  // One big net number can be misleading when a mortgage is in the mix,
+  // so we show what you have and what you owe alongside it.
+  function assetsAndDebt() {
+    var assets = 0, debt = 0;
+    (cache.accounts || []).forEach(function (a) {
+      var v = a.balance && typeof a.balance.current === 'number' ? a.balance.current : 0;
+      if (v < 0) debt += Math.abs(v); else assets += v;
+    });
+    return { assets: assets, debt: debt };
+  }
+
+  /* ---- talking to your relay ---- */
+  function relayGet(path) {
+    var base = (settings.relayUrl || '').replace(/\/+$/, '');
+    if (!base) return Promise.reject(new Error('No relay address set.'));
+    return fetch(base + path, { headers: { 'X-Relay-Key': settings.relayKey || '' }, cache: 'no-store' })
+      .then(function (r) {
+        return r.json().catch(function () { throw new Error('Relay sent something unreadable.'); })
+          .then(function (body) {
+            if (!r.ok) throw new Error(body && body.error ? body.error : ('Relay returned ' + r.status));
+            return body;
+          });
+      });
+  }
+
+  function sync() {
+    if (syncing) return;
+    if (!settings.relayUrl || !settings.relayKey) { switchScreen('settings'); toast('Add your relay details first'); return; }
+    syncing = true; lastError = null; render();
+
+    var since = new Date(); since.setDate(since.getDate() - (Number(settings.historyDays) || 90));
+
+    Promise.all([
+      relayGet('/accounts'),
+      relayGet('/transactions?start=' + encodeURIComponent(since.toISOString()))
+    ]).then(function (res) {
+      var accounts = res[0] && res[0].items ? res[0].items : (Array.isArray(res[0]) ? res[0] : []);
+      var txs = res[1] && res[1].items ? res[1].items : [];
+      cache = { accounts: accounts, transactions: txs, syncedAt: new Date().toISOString() };
+      store.set('cache', cache);
+      publishSummary();
+      toast('Updated — ' + txs.length + ' transactions');
+    }).catch(function (e) {
+      lastError = e.message || String(e);
+      toast('Could not update');
+    }).then(function () {
+      syncing = false; render();
+    });
+  }
+
+  /* ---- the small shared summary, same as the other apps ---- */
+  function publishSummary() {
+    try {
+      var r = periodRange();
+      var t = totals(txInRange(r));
+      var np = netPosition();
+      var top = Object.keys(t.byCat).sort(function (a,b) { return t.byCat[b] - t.byCat[a]; })[0] || null;
+      store.set('summary', {
+        schemaVersion: SUMMARY_VERSION,
+        updatedAt: new Date().toISOString(),
+        appId: 'finance',
+        headline: money(t.out) + ' spent ' + r.label,
+        data: {
+          periodLabel: r.label,
+          spentThisPeriod: Math.round(t.out),
+          incomeThisPeriod: Math.round(t.income),
+          netPositionNzd: np === null ? null : Math.round(np),
+          topCategory: top,
+          accountCount: (cache.accounts || []).length,
+          lastSyncedAt: cache.syncedAt
+        }
+      });
+    } catch (e) {}
+  }
+
+  /* ================= screens ================= */
+
+  function agoText(iso) {
+    if (!iso) return 'never synced';
+    var mins = Math.round((Date.now() - new Date(iso).getTime()) / 60000);
+    if (mins < 1) return 'synced just now';
+    if (mins < 60) return 'synced ' + mins + 'm ago';
+    var h = Math.round(mins / 60);
+    if (h < 24) return 'synced ' + h + 'h ago';
+    var d = Math.round(h / 24);
+    return 'synced ' + d + (d === 1 ? ' day ago' : ' days ago');
+  }
+
+  function notSetUpHtml() {
+    return '<div class="empty">Forge Finance isn\'t connected yet.<br><br>' +
+           'Open <b>Settings</b> and paste in your relay address and password. ' +
+           'Your Akahu tokens stay on the relay — they never come near this app.</div>';
+  }
+
+  function renderOverview() {
+    var el = $('screen-overview');
+    if (!settings.relayUrl || !settings.relayKey) { el.innerHTML = notSetUpHtml(); return; }
+
+    var r = periodRange();
+    var t = totals(txInRange(r));
+    var pt = totals(txInRange(prevRange(r)));
+    var np = netPosition();
+    var diff = pt.out ? Math.round((t.out - pt.out) / pt.out * 100) : null;
+
+    var html = '';
+    if (lastError) {
+      html += '<div class="banner bad"><b>Couldn\'t reach your relay.</b><br>' + esc(lastError) + '</div>';
+    }
+    if (!cache.syncedAt) {
+      html += '<div class="banner warn">No data yet — tap Update below to pull it in.</div>';
+    }
+
+    var ad = assetsAndDebt();
+    html += '<div class="card hero">' +
+              '<div class="lbl">Net position</div>' +
+              '<div class="big' + (np !== null && np < 0 ? ' neg' : '') + '">' + (np === null ? '–' : money(np)) + '</div>' +
+              '<div class="note">' +
+                (np === null ? '' : money(ad.assets) + ' held' + (ad.debt ? ' · ' + money(ad.debt) + ' owing' : '') + '<br>') +
+                (cache.accounts || []).length + ' accounts · ' + esc(agoText(cache.syncedAt)) +
+              '</div>' +
+            '</div>';
+
+    html += '<div class="split">' +
+              '<div class="stat"><div class="v out">' + money(t.out) + '</div><div class="l">Spent ' + esc(r.label) + '</div></div>' +
+              '<div class="stat"><div class="v in">' + money(t.income) + '</div><div class="l">In ' + esc(r.label) + '</div></div>' +
+            '</div>';
+
+    if (diff !== null) {
+      html += '<div class="banner ' + (diff <= 0 ? 'ok' : 'warn') + '" style="margin-top:12px;">' +
+              (diff <= 0 ? 'Down ' : 'Up ') + Math.abs(diff) + '% on the previous ' +
+              (settings.period === 'fortnight' ? 'fortnight' : 'month') + ' (' + money(pt.out) + ').</div>';
+    }
+
+    html += '<h2 class="sec">Accounts</h2><div class="card">';
+    if (!(cache.accounts || []).length) {
+      html += '<div style="color:var(--muted);font-size:13px;">Nothing yet.</div>';
+    } else {
+      html += cache.accounts.map(function (a) {
+        var bal = a.balance && typeof a.balance.current === 'number' ? a.balance.current : null;
+        return '<div class="acct"><div class="an">' +
+                 '<div class="n">' + esc(a.name || 'Account') + '</div>' +
+                 '<div class="b">' + esc((a.connection && a.connection.name) || a.type || '') + '</div>' +
+               '</div><div class="bal' + (bal !== null && bal < 0 ? ' neg' : '') + '">' +
+                 (bal === null ? '–' : money(bal)) + '</div></div>';
+      }).join('');
+    }
+    html += '</div>';
+
+    html += '<button class="btn primary" id="syncBtn">' + (syncing ? 'Updating…' : 'Update now') + '</button>';
+    el.innerHTML = html;
+    if ($('syncBtn')) $('syncBtn').addEventListener('click', sync);
+  }
+
+  function renderSpending() {
+    var el = $('screen-spending');
+    if (!settings.relayUrl || !settings.relayKey) { el.innerHTML = notSetUpHtml(); return; }
+
+    var r = periodRange();
+    var t = totals(txInRange(r));
+    var cats = Object.keys(t.byCat).sort(function (a, b) { return t.byCat[b] - t.byCat[a]; });
+    var max = cats.length ? t.byCat[cats[0]] : 0;
+
+    var html = '<div class="card hero">' +
+                 '<div class="lbl">Spent ' + esc(r.label) + '</div>' +
+                 '<div class="big">' + money(t.out) + '</div>' +
+                 '<div class="note">' + r.start.toLocaleDateString(undefined,{day:'numeric',month:'short'}) +
+                   ' – ' + r.end.toLocaleDateString(undefined,{day:'numeric',month:'short'}) +
+                   (r.nextLabel ? ' · ' + esc(r.nextLabel) : '') + '</div>' +
+               '</div>';
+
+    if (!cats.length) {
+      html += '<div class="empty">No spending recorded in this period yet.</div>';
+    } else {
+      html += '<h2 class="sec">Where it went</h2><div class="card">';
+      html += cats.map(function (c) {
+        var v = t.byCat[c];
+        var pct = t.out ? Math.round(v / t.out * 100) : 0;
+        return '<div class="catrow"><div class="top">' +
+                 '<span class="cn">' + esc(c) + '</span>' +
+                 '<span class="cv">' + money(v) + '<span class="cp">' + pct + '%</span></span>' +
+               '</div><div class="track"><div class="fill" style="width:' +
+                 (max ? Math.round(v / max * 100) : 0) + '%;' +
+                 (c === 'Uncategorised' ? 'background:var(--gold);' : '') + '"></div></div></div>';
+      }).join('');
+      html += '</div>';
+      if (t.byCat['Uncategorised']) {
+        html += '<div class="banner warn">Some spending is still uncategorised. Tap those items under ' +
+                '<b>Activity</b> to sort them — it remembers each one for next time.</div>';
+      }
+    }
+    el.innerHTML = html;
+  }
+
+  function renderActivity() {
+    var el = $('screen-activity');
+    if (!settings.relayUrl || !settings.relayKey) { el.innerHTML = notSetUpHtml(); return; }
+
+    var list = (cache.transactions || []).slice().sort(function (a, b) {
+      return new Date(b.date).getTime() - new Date(a.date).getTime();
+    });
+
+    if (!list.length) {
+      el.innerHTML = '<div class="empty">No transactions yet. Pull them in from the Overview screen.</div>';
+      return;
+    }
+
+    var html = '';
+    var lastDay = '';
+    list.slice(0, 300).forEach(function (t, i) {
+      var d = new Date(t.date);
+      var day = d.toLocaleDateString(undefined, { weekday:'short', day:'numeric', month:'short' });
+      if (day !== lastDay) { html += '<div class="daylbl">' + esc(day) + '</div>'; lastDay = day; }
+      var amt = Number(t.amount) || 0;
+      var cat = categoryOf(t);
+      var name = (t.merchant && t.merchant.name) || t.description || 'Transaction';
+      html += '<div class="tx" data-i="' + i + '">' +
+                '<div class="ti"><div class="tn">' + esc(name) + '</div>' +
+                  '<div class="tc"><span class="chip' + (cat === 'Uncategorised' ? ' none' : '') + '">' + esc(cat) + '</span></div></div>' +
+                '<div class="ta' + (amt > 0 ? ' in' : '') + '">' + (amt > 0 ? '+' : '') + moneyExact(amt) + '</div>' +
+              '</div>';
+    });
+    el.innerHTML = html;
+
+    Array.prototype.forEach.call(el.querySelectorAll('.tx'), function (row) {
+      row.addEventListener('click', function () { openCategorySheet(list[Number(row.dataset.i)]); });
+    });
+  }
+
+  function openCategorySheet(t) {
+    var current = categoryOf(t);
+    var name = (t.merchant && t.merchant.name) || t.description || 'Transaction';
+    $('sheet').innerHTML =
+      '<h3>' + esc(name) + '</h3>' +
+      '<div class="sub">' + moneyExact(Number(t.amount) || 0) + ' · ' +
+        new Date(t.date).toLocaleDateString(undefined,{day:'numeric',month:'long'}) +
+        '<br>Choosing a category here also applies it to anything else from ' + esc(txKey(t)) + '.</div>' +
+      '<div class="catgrid">' +
+        CATEGORIES.map(function (c) {
+          return '<button data-cat="' + esc(c) + '" class="' + (c === current ? 'on' : '') + '">' + esc(c) + '</button>';
+        }).join('') +
+      '</div>' +
+      '<button class="btn ghost small" id="closeSheet" style="margin-top:14px;">Close</button>';
+    $('scrim').classList.add('open');
+
+    Array.prototype.forEach.call($('sheet').querySelectorAll('[data-cat]'), function (b) {
+      b.addEventListener('click', function () {
+        setCategory(t, b.dataset.cat);
+        $('scrim').classList.remove('open');
+        publishSummary();
+        render();
+        toast('Saved — ' + b.dataset.cat);
+      });
+    });
+    $('closeSheet').addEventListener('click', function () { $('scrim').classList.remove('open'); });
+  }
+
+  function renderSettings() {
+    var el = $('screen-settings');
+    var html = '';
+
+    html += '<h2 class="sec">Your relay</h2>';
+    html += '<div class="card">' +
+      '<div class="field"><label>Relay address</label>' +
+        '<input type="text" id="setUrl" placeholder="https://forge-finance-relay.you.workers.dev" value="' + esc(settings.relayUrl) + '">' +
+        '<div class="hint">The web address Cloudflare gave your worker.</div></div>' +
+      '<div class="field"><label>Relay password</label>' +
+        '<input type="password" id="setKey" placeholder="the RELAY_KEY you invented" value="' + esc(settings.relayKey) + '">' +
+        '<div class="hint">Must match the RELAY_KEY secret on the worker. Your Akahu tokens are not stored here — they stay on the relay.</div></div>' +
+      '<button class="btn ghost small" id="testBtn">Test connection</button>' +
+      '<div id="testOut" style="margin-top:10px;"></div>' +
+    '</div>';
+
+    html += '<h2 class="sec">Your pay cycle</h2>';
+    html += '<div class="card">' +
+      '<div class="field"><label>Track spending by</label>' +
+        '<div class="seg">' +
+          '<button id="pMonth" class="' + (settings.period !== 'fortnight' ? 'on' : '') + '">Calendar month</button>' +
+          '<button id="pFort" class="' + (settings.period === 'fortnight' ? 'on' : '') + '">Fortnight</button>' +
+        '</div></div>' +
+      (settings.period === 'fortnight' ?
+        '<div class="field"><label>A recent payday</label>' +
+          '<input type="date" id="setAnchor" value="' + esc(settings.anchor || '') + '">' +
+          '<div class="hint">Any payday will do — it counts forward in fortnights from there.</div></div>' : '') +
+      '<div class="field"><label>How much history to pull</label>' +
+        '<input type="number" id="setDays" min="7" max="730" value="' + esc(settings.historyDays || 90) + '">' +
+        '<div class="hint">Days. 90 is plenty for spotting patterns.</div></div>' +
+      '<button class="btn primary" id="saveBtn">Save settings</button>' +
+    '</div>';
+
+    html += '<h2 class="sec">Data</h2>';
+    html += '<div class="card">' +
+      '<div style="font-size:12.5px;color:var(--muted);line-height:1.6;">' +
+        Object.keys(rules).length + ' category rules learned · ' +
+        (cache.transactions || []).length + ' transactions held · ' + esc(agoText(cache.syncedAt)) +
+      '</div>' +
+      '<button class="btn danger" id="clearBtn" style="margin-top:10px;">Clear everything stored on this phone</button>' +
+    '</div>';
+
+    el.innerHTML = html;
+
+    $('pMonth').addEventListener('click', function () { settings.period = 'month'; store.set('settings', settings); renderSettings(); });
+    $('pFort').addEventListener('click', function () { settings.period = 'fortnight'; store.set('settings', settings); renderSettings(); });
+
+    $('saveBtn').addEventListener('click', function () {
+      settings.relayUrl = $('setUrl').value.trim();
+      settings.relayKey = $('setKey').value.trim();
+      settings.historyDays = Math.max(7, Math.min(730, Number($('setDays').value) || 90));
+      if ($('setAnchor')) settings.anchor = $('setAnchor').value;
+      store.set('settings', settings);
+      toast('Saved');
+      render();
+    });
+
+    $('testBtn').addEventListener('click', function () {
+      settings.relayUrl = $('setUrl').value.trim();
+      settings.relayKey = $('setKey').value.trim();
+      store.set('settings', settings);
+      $('testOut').innerHTML = '<div class="banner warn">Checking…</div>';
+      relayGet('/accounts').then(function (b) {
+        var n = (b && b.items ? b.items.length : 0);
+        $('testOut').innerHTML = '<div class="banner ok">Connected. ' + n + ' account' + (n === 1 ? '' : 's') + ' found.</div>';
+      }).catch(function (e) {
+        $('testOut').innerHTML = '<div class="banner bad">' + esc(e.message || String(e)) + '</div>';
+      });
+    });
+
+    $('clearBtn').addEventListener('click', function () {
+      $('sheet').innerHTML = '<h3>Clear stored data?</h3>' +
+        '<div class="sub">This wipes the cached transactions, your category rules and your relay settings from this phone. ' +
+        'Nothing at Akahu or Cloudflare is touched, and you can set it up again any time.</div>' +
+        '<button class="btn primary" id="confirmClear" style="background:var(--danger);color:#fff;">Yes, clear it</button>' +
+        '<button class="btn ghost small" id="cancelClear" style="margin-top:9px;">Cancel</button>';
+      $('scrim').classList.add('open');
+      $('confirmClear').addEventListener('click', function () {
+        ['settings','cache','rules','summary'].forEach(function (k) {
+          try { localStorage.removeItem(APP_PREFIX + k); } catch (e) {}
+        });
+        settings = { relayUrl:'', relayKey:'', period:'month', anchor:'', historyDays:90 };
+        cache = { accounts: [], transactions: [], syncedAt: null };
+        rules = {};
+        $('scrim').classList.remove('open');
+        render();
+        toast('Cleared');
+      });
+      $('cancelClear').addEventListener('click', function () { $('scrim').classList.remove('open'); });
+    });
+  }
+
+  var currentScreen = 'overview';
+  function render() {
+    if (currentScreen === 'overview') renderOverview();
+    else if (currentScreen === 'spending') renderSpending();
+    else if (currentScreen === 'activity') renderActivity();
+    else renderSettings();
+    var r = periodRange();
+    $('topSub').innerHTML = esc(r.label) + '<br>' + esc(agoText(cache.syncedAt));
+  }
+
+  function switchScreen(name) {
+    currentScreen = name;
+    Array.prototype.forEach.call(document.querySelectorAll('.screen'), function (s) { s.classList.remove('active'); });
+    $('screen-' + name).classList.add('active');
+    Array.prototype.forEach.call(document.querySelectorAll('.tab'), function (t) {
+      t.classList.toggle('active', t.dataset.screen === name);
+    });
+    render();
+    window.scrollTo(0, 0);
+  }
+  Array.prototype.forEach.call(document.querySelectorAll('.tab'), function (t) {
+    t.addEventListener('click', function () { switchScreen(t.dataset.screen); });
+  });
+  $('scrim').addEventListener('click', function (e) { if (e.target === $('scrim')) $('scrim').classList.remove('open'); });
+
+  function boot() {
+    render();
+    publishSummary();
+    // If it's been a while and we're set up, quietly refresh in the background.
+    var stale = !cache.syncedAt || (Date.now() - new Date(cache.syncedAt).getTime()) > 6 * 3600000;
+    if (settings.relayUrl && settings.relayKey && stale) sync();
+    if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js').catch(function () {});
+  }
+
+  boot();
+})();
+</script>
+</body>
+</html>
