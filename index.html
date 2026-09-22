@@ -1005,8 +1005,20 @@
   // So an app's settings screen can offer "Back up now".
   window.ecosystemBackup = { send: send, snapshot: snapshot, relay: relay, stampKey: STAMP_KEY };
 
+  // Ask Android not to evict this app's data when the phone is short on
+  // space. Silently ignored where it isn't supported. Harmless either way.
+  function askToKeepData() {
+    try {
+      if (navigator.storage && navigator.storage.persist && navigator.storage.persisted) {
+        navigator.storage.persisted().then(function (already) {
+          if (!already) navigator.storage.persist().catch(function () {});
+        }).catch(function () {});
+      }
+    } catch (e) {}
+  }
+
   // Well after the app has finished starting up, so it never competes.
-  function start() { setTimeout(run, 3000); }
+  function start() { askToKeepData(); setTimeout(run, 3000); }
   if (document.readyState === 'complete') start();
   else window.addEventListener('load', start);
 })();
