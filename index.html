@@ -85,6 +85,13 @@
   .track { height:7px; background: var(--surface2); border-radius:4px; overflow:hidden; }
   .fill { height:100%; background: var(--brand); border-radius:4px; }
   .bnote { font-size:11px; margin-top:4px; font-weight:600; }
+  .bill { display:flex; align-items:center; gap:11px; padding:10px 0; border-bottom:1px solid var(--line); cursor:pointer; }
+  .bill .bi { flex:1; min-width:0; }
+  .bill .bn { font-size:13.5px; font-weight:600; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .bill .bw { font-size:10.5px; color:var(--muted); margin-top:3px; font-weight:600; }
+  .bill .bw.now { color:var(--gold); }
+  .bill .ba { font-family: var(--font-display); font-size:15px; font-variant-numeric: tabular-nums; white-space:nowrap; }
+  .linkbtn { background:none; border:none; color:var(--brand); font:inherit; font-weight:700; padding:0; cursor:pointer; text-decoration:underline; }
   .btotal { font-size:11.5px; color:var(--muted); border-top:1px solid var(--line); padding-top:11px; margin-top:13px; }
   .brow { display:flex; align-items:center; justify-content:space-between; gap:12px; padding:6px 0; border-bottom:1px solid var(--line); font-size:13.5px; }
   .brow input { width:110px; text-align:right; }
@@ -266,6 +273,8 @@
   // Monthly budget per category, e.g. { 'Groceries': 600 }. Stored as monthly
   // amounts; on a fortnightly cycle they're scaled to a fortnight (x 12/26).
   var budgets = store.get('budgets', {});
+  // Shops you've said aren't regular bills, e.g. { 'KMART HORNBY': true }.
+  var notBills = store.get('notBills', {});
   var syncing = false;
   var lastError = null;
 
@@ -367,6 +376,33 @@
       });
     return words.slice(0, 3).join(' ') || 'OTHER';
   }
+  // Akahu labels shops with its own detailed names ("Supermarkets and
+  // grocery stores", "Cafes and restaurants" ...). Turn those into this app's
+  // categories so budgets and refunds line up. Anything it doesn't recognise
+  // keeps Akahu's name, which still counts as spending.
+  var AKAHU_MAP = [
+    [/salary|wage|payroll|income|interest|dividend|government benefit/, 'Income'],
+    [/transfer/, 'Savings & transfers'],
+    [/supermarket|grocer|butcher|greengrocer|bakeries|bakery|liquor|food retail/, 'Groceries'],
+    [/cafe|restaurant|takeaway|take-away|fast food|\bbars?\b|\bpubs?\b|food delivery|dining|coffee/, 'Eating out'],
+    [/fuel|petrol|service station|parking|public transport|taxi|ride ?share|toll|automotive|vehicle|car /, 'Transport'],
+    [/electricity|gas |energy|internet|broadband|telecommunication|mobile|phone|water|utilit|council|rates/, 'Bills & utilities'],
+    [/\brent\b|mortgage|property management|real estate/, 'Rent & mortgage'],
+    [/insurance/, 'Insurance'],
+    [/pharmac|chemist|medical|doctor|dental|dentist|health|optometr|hospital|physio/, 'Health'],
+    [/subscription|streaming|software/, 'Subscriptions'],
+    [/entertainment|cinema|movie|gaming|recreation|sport|gym|fitness|event|ticket/, 'Entertainment'],
+    [/clothing|apparel|department|hardware|electronics|retail|homeware|furniture|shop|store/, 'Shopping']
+  ];
+  function fromAkahu(c) {
+    var names = [c.name, c.groups && c.groups.personal_finance && c.groups.personal_finance.name]
+      .filter(Boolean).join(' | ').toLowerCase();
+    for (var i = 0; i < AKAHU_MAP.length; i++) {
+      if (AKAHU_MAP[i][0].test(names)) return AKAHU_MAP[i][1];
+    }
+    return c.name;
+  }
+
   function categoryOf(t) {
     var key = txKey(t);
     if (rules[key]) return rules[key];                      // what you chose before
@@ -377,7 +413,7 @@
     for (var seed in SEED_RULES) {
       if (desc.indexOf(seed) !== -1) return SEED_RULES[seed];
     }
-    if (t.category && t.category.name) return t.category.name;   // Akahu's own, if we get it
+    if (t.category && t.category.name) return fromAkahu(t.category);   // Akahu's own, if we get it
     if (Number(t.amount) > 0) return 'Income';
     return 'Uncategorised';
   }
@@ -406,7 +442,9 @@
   }
   // Categories that are spending (everything except money in and own-money moves).
   var SPEND_CATS = CATEGORIES.filter(function (c) { return !NOT_SPEND[c]; });
-  function isSpendCat(c) { return SPEND_CATS.indexOf(c) !== -1 || c === 'Uncategorised'; }
+  // Everything except money in and own-money moves is spending — including
+  // Akahu category names the app doesn't recognise.
+  function isSpendCat(c) { return !NOT_SPEND[c]; }
 
   function totals(list) {
     var income = 0, refunds = 0, byCat = {};
@@ -520,6 +558,7 @@
       var t = totals(txInRange(r));
       var np = netPosition();
       var top = Object.keys(t.byCat).sort(function (a,b) { return t.byCat[b] - t.byCat[a]; })[0] || null;
+      var up = upcomingIn(r);
       store.set('summary', {
         schemaVersion: SUMMARY_VERSION,
         updatedAt: new Date().toISOString(),
@@ -534,6 +573,9 @@
           topCategory: top,
           accountCount: (cache.accounts || []).length,
           pendingSpend: Math.round(pendingOutIn(r)),
+          leftOfPay: t.income > 0 ? Math.round(t.income - t.out) : null,
+          upcomingBillsTotal: Math.round(sumUpcoming(up)),
+          nextBill: up.length ? { name: up[0].bill.name, date: dstr(up[0].date), amount: Math.round(up[0].bill.amount) } : null,
           budgetsOver: SPEND_CATS.filter(function (c) { return budgetFor(c) && (t.byCat[c] || 0) > budgetFor(c); }),
           lastSyncedAt: cache.syncedAt
         }
@@ -579,6 +621,8 @@
     // worth waking up to. If it hasn't, fall back to what's gone out.
     var hasIncome = t.income > 0;
     var heroVal = hasIncome ? (t.income - t.out) : t.out;
+    var upcoming = upcomingIn(r);
+    var upTotal = sumUpcoming(upcoming);
     var periodWord = settings.period === 'fortnight' ? 'fortnight' : 'month';
 
     var html = '';
@@ -605,6 +649,7 @@
               '<div class="note">' +
                 (hasIncome ? money(t.out) + ' spent of ' + money(t.income) + '<br>' : '') +
                 (pendingOutIn(r) > 0 ? 'includes ' + money(pendingOutIn(r)) + ' still clearing<br>' : '') +
+                (hasIncome && upTotal > 0 ? '≈ ' + money(heroVal - upTotal) + ' after bills still to come<br>' : '') +
                 (left > 0
                   ? left + (left === 1 ? ' day to go' : ' days to go') +
                     (r.nextLabel ? ' · ' + esc(r.nextLabel) : '')
@@ -639,6 +684,20 @@
                 (np === null ? '–' : money(np)) + '</div>' +
             '</div>';
 
+    if (upcoming.length) {
+      html += '<h2 class="sec">Coming up ' + (r.nextLabel ? 'before payday' : 'this month') + '</h2><div class="card">' +
+        upcoming.slice(0, 8).map(function (u, i) {
+          return '<div class="bill" data-u="' + i + '"><div class="bi"><div class="bn">' + esc(u.bill.name) + '</div>' +
+                   '<div class="bw' + (u.bill.dueNow && u.date.getTime() === u.bill.next.getTime() ? ' now' : '') + '">' +
+                     esc(whenWord(u.date, u.bill.dueNow && u.date.getTime() === u.bill.next.getTime())) +
+                   ' · ' + FREQ_WORD[u.bill.freq] + '</div></div>' +
+                 '<div class="ba">' + billAmt(u.bill) + '</div></div>';
+        }).join('') +
+        (upcoming.length > 8 ? '<div class="btotal">+ ' + (upcoming.length - 8) + ' more</div>' : '') +
+        '<div class="btotal">≈ ' + money(upTotal) + ' still to come · spotted from your history, so check it looks right</div>' +
+      '</div>';
+    }
+
     html += '<h2 class="sec">Accounts</h2><div class="card">';
     if (!(cache.accounts || []).length) {
       html += '<div style="color:var(--muted);font-size:13px;">Nothing yet.</div>';
@@ -657,6 +716,131 @@
     html += '<button class="btn primary" id="syncBtn">' + (syncing ? 'Updating…' : 'Update now') + '</button>';
     el.innerHTML = html;
     if ($('syncBtn')) $('syncBtn').addEventListener('click', sync);
+    Array.prototype.forEach.call(el.querySelectorAll('.bill[data-u]'), function (row) {
+      row.addEventListener('click', function () { openBillSheet(upcoming[Number(row.dataset.u)].bill); });
+    });
+  }
+
+
+  /* ---- regular bills & subscriptions, spotted from your history ---- */
+  // Day-to-day spending repeats too (a weekly supermarket shop), but it isn't
+  // a bill, so these categories are never treated as one.
+  var NOT_BILL_CATS = { 'Groceries': true, 'Eating out': true, 'Transport': true };
+  // Bills whose amount naturally moves around month to month.
+  var VARIABLE_OK = { 'Bills & utilities': true, 'Rent & mortgage': true, 'Insurance': true };
+  var DAY = 86400000;
+
+  function dayStart(d) { var x = new Date(d); x.setHours(0,0,0,0); return x; }
+  function addMonth(d) {
+    var x = new Date(d), day = x.getDate();
+    x.setDate(1); x.setMonth(x.getMonth() + 1);
+    x.setDate(Math.min(day, new Date(x.getFullYear(), x.getMonth() + 1, 0).getDate()));
+    return x;
+  }
+  function stepFrom(d, freq) {
+    return freq === 'monthly' ? addMonth(d) : new Date(d.getTime() + (freq === 'weekly' ? 7 : 14) * DAY);
+  }
+  var FREQ_WORD = { weekly: 'Weekly', fortnightly: 'Fortnightly', monthly: 'Monthly' };
+  var PER_MONTH = { weekly: 52 / 12, fortnightly: 26 / 12, monthly: 1 };
+
+  function detectBills() {
+    var groups = {};
+    allTx().forEach(function (t) {
+      var amt = Number(t.amount) || 0;
+      if (amt >= 0) return;
+      var cat = categoryOf(t);
+      if (NOT_SPEND[cat] || NOT_BILL_CATS[cat]) return;
+      var k = txKey(t);
+      (groups[k] = groups[k] || { key: k, cat: cat, items: [] }).items.push(t);
+    });
+
+    var today = dayStart(new Date());
+    var bills = [];
+    Object.keys(groups).forEach(function (k) {
+      if (notBills[k]) return;
+      var g = groups[k];
+      // one payment per day at most, oldest first
+      var byDay = {};
+      g.items.forEach(function (t) { byDay[dstr(dayStart(t.date))] = t; });
+      var items = Object.keys(byDay).sort().map(function (d) { return byDay[d]; });
+      if (items.length < 2) return;
+
+      var gaps = [];
+      for (var i = 1; i < items.length; i++) {
+        gaps.push(Math.round((dayStart(items[i].date) - dayStart(items[i - 1].date)) / DAY));
+      }
+      // Real history is a bit messy (a payment retried, one that clears a day
+      // late), so with enough payments one odd gap is forgiven.
+      function fits(lo, hi) {
+        var ok = gaps.filter(function (x) { return x >= lo && x <= hi; }).length;
+        return ok === gaps.length || (gaps.length >= 3 && ok >= gaps.length - 1);
+      }
+      var freq = null;
+      if (fits(26, 35)) freq = 'monthly';
+      else if (items.length >= 3 && fits(12, 16)) freq = 'fortnightly';
+      else if (items.length >= 3 && fits(6, 8)) freq = 'weekly';
+      if (!freq) return;
+
+      var amts = items.map(function (t) { return Math.abs(Number(t.amount) || 0); });
+      var hi = Math.max.apply(null, amts), lo = Math.min.apply(null, amts);
+      var variable = hi > 0 && (hi - lo) / hi > 0.15;
+      if (variable && !VARIABLE_OK[g.cat]) return;
+      var recent = amts.slice(-3);
+      var amount = variable ? recent.reduce(function (a, b) { return a + b; }, 0) / recent.length : amts[amts.length - 1];
+
+      var last = items[items.length - 1];
+      var next = dayStart(stepFrom(dayStart(last.date), freq));
+      var lateBy = Math.round((today - next) / DAY);
+      if (lateBy > (freq === 'weekly' ? 3 : 6)) return;   // looks like it has stopped
+      var dueNow = lateBy > 0;
+      if (dueNow) next = today;                           // a few days late — expect it any day
+
+      bills.push({
+        key: k, cat: g.cat, freq: freq, amount: amount, variable: variable, next: next, dueNow: dueNow,
+        name: (last.merchant && last.merchant.name) || last.description || k,
+        count: items.length, perMonth: amount * PER_MONTH[freq]
+      });
+    });
+    return bills.sort(function (a, b) { return a.next - b.next; });
+  }
+
+  // Every bill payment still to come between today and the end of the period
+  // (weekly ones can land more than once).
+  function upcomingIn(r, bills) {
+    var out = [];
+    (bills || detectBills()).forEach(function (b) {
+      for (var d = b.next, n = 0; d.getTime() <= r.end.getTime() && n < 6; d = stepFrom(d, b.freq), n++) {
+        out.push({ bill: b, date: d });
+      }
+    });
+    return out.sort(function (a, b) { return a.date - b.date; });
+  }
+  function sumUpcoming(list) { return list.reduce(function (s, u) { return s + u.bill.amount; }, 0); }
+
+  function whenWord(d, dueNow) {
+    if (dueNow) return 'Due now';
+    var days = Math.round((dayStart(d) - dayStart(new Date())) / DAY);
+    if (days === 0) return 'Today';
+    if (days === 1) return 'Tomorrow';
+    return d.toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short' });
+  }
+  function billAmt(b) { return (b.variable ? '≈ ' : '') + money(b.amount); }
+
+  function openBillSheet(b) {
+    $('sheet').innerHTML =
+      '<h3>' + esc(b.name) + '</h3>' +
+      '<div class="sub">' + FREQ_WORD[b.freq] + ' · ' + billAmt(b) + ' · seen ' + b.count + ' times' +
+        '<br>Next expected ' + esc(whenWord(b.next, b.dueNow)) +
+        (b.variable ? '<br>The amount changes, so this is an average of the last few.' : '') + '</div>' +
+      '<button class="btn ghost small" id="notBillBtn">This isn\'t a regular bill</button>' +
+      '<button class="btn ghost small" id="closeSheet" style="margin-top:8px;">Close</button>';
+    $('scrim').classList.add('open');
+    $('notBillBtn').addEventListener('click', function () {
+      notBills[b.key] = true; store.set('notBills', notBills);
+      $('scrim').classList.remove('open'); publishSummary(); render();
+      toast('Hidden — ' + b.name);
+    });
+    $('closeSheet').addEventListener('click', function () { $('scrim').classList.remove('open'); });
   }
 
   /* ---- budgets ---- */
@@ -766,7 +950,28 @@
                 '<button class="btn primary" id="tidyBtn">Sort them out</button>';
       }
     }
+    var bills = detectBills();
+    var hidden = Object.keys(notBills).length;
+    if (bills.length || hidden) {
+      var perMonth = bills.reduce(function (s, b) { return s + b.perMonth; }, 0);
+      html += '<h2 class="sec">Regular payments</h2><div class="card">' +
+        bills.map(function (b, i) {
+          return '<div class="bill" data-b="' + i + '"><div class="bi"><div class="bn">' + esc(b.name) + '</div>' +
+                   '<div class="bw">' + FREQ_WORD[b.freq] + ' · next ' + esc(whenWord(b.next, b.dueNow)) + '</div></div>' +
+                 '<div class="ba">' + billAmt(b) + '</div></div>';
+        }).join('') +
+        '<div class="btotal">' + (bills.length ? '≈ ' + money(perMonth) + ' a month in regular payments. Tap one that isn\'t really a bill to hide it.' : 'Nothing regular spotted.') +
+          (hidden ? ' <button class="linkbtn" id="unhideBills">Show ' + hidden + ' hidden</button>' : '') + '</div>' +
+      '</div>';
+    }
+
     el.innerHTML = html;
+    Array.prototype.forEach.call(el.querySelectorAll('.bill[data-b]'), function (row) {
+      row.addEventListener('click', function () { openBillSheet(bills[Number(row.dataset.b)]); });
+    });
+    if ($('unhideBills')) $('unhideBills').addEventListener('click', function () {
+      notBills = {}; store.set('notBills', notBills); publishSummary(); render();
+    });
     if ($('tidyBtn')) $('tidyBtn').addEventListener('click', openTidySheet);
     if ($('budgetBtn')) $('budgetBtn').addEventListener('click', openBudgetSheet);
   }
@@ -1042,7 +1247,7 @@
         '<button class="btn ghost small" id="cancelClear" style="margin-top:9px;">Cancel</button>';
       $('scrim').classList.add('open');
       $('confirmClear').addEventListener('click', function () {
-        ['settings','cache','rules','summary','budgets'].forEach(function (k) {
+        ['settings','cache','rules','summary','budgets','notBills'].forEach(function (k) {
           try { localStorage.removeItem(APP_PREFIX + k); } catch (e) {}
         });
         settings = { relayUrl:'', relayKey:'', period:'month', anchor:'', historyDays:90 };
