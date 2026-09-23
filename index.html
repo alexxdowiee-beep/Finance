@@ -589,6 +589,9 @@
         headline: money(t.out) + ' spent ' + r.label,
         data: {
           periodLabel: r.label,
+          periodStart: r.start.toISOString(),
+          periodEnd: r.end.toISOString(),
+          budgetTotal: Math.round(SPEND_CATS.reduce(function (sum, c) { return sum + budgetFor(c); }, 0)) || null,
           daysLeftInPeriod: daysLeftIn(r),
           spentThisPeriod: Math.round(t.out),
           incomeThisPeriod: Math.round(t.income),
