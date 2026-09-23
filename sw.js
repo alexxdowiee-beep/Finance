@@ -1,8 +1,8 @@
 // Forge Finance service worker - offline support.
 // Note: only the app's own files are cached. Relay requests are never
 // cached, so your balances are never served stale from here.
-const CACHE = 'forge-finance-v4';
-const ASSETS = ['./', './index.html', './manifest.json', './icon-192.png', './icon-512.png'];
+const CACHE = 'forge-finance-v5';
+const ASSETS = ['./', './index.html', './manifest.json', './icon-192.png', './icon-512.png', './icon-maskable-512.png'];
 
 self.addEventListener('install', e => {
   e.waitUntil(caches.open(CACHE).then(c => c.addAll(ASSETS)).then(() => self.skipWaiting()));
