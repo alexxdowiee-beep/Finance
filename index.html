@@ -84,6 +84,10 @@
   .catrow .cp { font-size:10.5px; color:var(--faint); margin-left:6px; font-family: var(--font-body); font-weight:700; }
   .track { height:7px; background: var(--surface2); border-radius:4px; overflow:hidden; }
   .fill { height:100%; background: var(--brand); border-radius:4px; }
+  .bnote { font-size:11px; margin-top:4px; font-weight:600; }
+  .btotal { font-size:11.5px; color:var(--muted); border-top:1px solid var(--line); padding-top:11px; margin-top:13px; }
+  .brow { display:flex; align-items:center; justify-content:space-between; gap:12px; padding:6px 0; border-bottom:1px solid var(--line); font-size:13.5px; }
+  .brow input { width:110px; text-align:right; }
 
   .tx { display:flex; align-items:center; gap:11px; padding:12px 2px; border-bottom:1px solid var(--line); cursor:pointer; }
   .tx:last-child { border-bottom:none; }
@@ -92,6 +96,8 @@
   .tx .tc { font-size:10.5px; color:var(--muted); margin-top:3px; }
   .tx .tc .chip { background: var(--surface2); border:1px solid var(--line); border-radius:20px; padding:2px 7px; font-weight:700; }
   .tx .tc .chip.none { color: var(--gold); border-color: var(--gold); }
+  .tx .tc .chip.pend { color: var(--muted); border-style: dashed; }
+  .tx .ta.pend { opacity: 0.6; }
   .tx .ta { font-family: var(--font-display); font-size:15px; font-variant-numeric: tabular-nums; white-space:nowrap; }
   .tx .ta.in { color: var(--good); }
   .daylbl { font-size:11px; color:var(--faint); font-weight:700; text-transform:uppercase; letter-spacing:0.06em; margin:18px 0 2px; }
@@ -257,6 +263,9 @@
   var settings = store.get('settings', { relayUrl: '', relayKey: '', period: 'month', anchor: '', historyDays: 90 });
   var cache = store.get('cache', { accounts: [], transactions: [], syncedAt: null });
   var rules = store.get('rules', {});
+  // Monthly budget per category, e.g. { 'Groceries': 600 }. Stored as monthly
+  // amounts; on a fortnightly cycle they're scaled to a fortnight (x 12/26).
+  var budgets = store.get('budgets', {});
   var syncing = false;
   var lastError = null;
 
@@ -377,23 +386,50 @@
     store.set('rules', rules);
   }
 
+  // Settled transactions plus ones the bank hasn't finished processing yet.
+  // Pending ones carry _pending: true so they can be labelled.
+  function pendingOutIn(r) {
+    return (cache.pending || []).reduce(function (sum, t) {
+      var d = new Date(t.date).getTime(), a = Number(t.amount) || 0;
+      return (d >= r.start.getTime() && d <= r.end.getTime() && a < 0) ? sum + Math.abs(a) : sum;
+    }, 0);
+  }
+  function allTx() {
+    return (cache.transactions || []).concat(cache.pending || []);
+  }
+
   function txInRange(r) {
-    return (cache.transactions || []).filter(function (t) {
+    return allTx().filter(function (t) {
       var d = new Date(t.date).getTime();
       return d >= r.start.getTime() && d <= r.end.getTime();
     });
   }
+  // Categories that are spending (everything except money in and own-money moves).
+  var SPEND_CATS = CATEGORIES.filter(function (c) { return !NOT_SPEND[c]; });
+  function isSpendCat(c) { return SPEND_CATS.indexOf(c) !== -1 || c === 'Uncategorised'; }
+
   function totals(list) {
-    var out = 0, income = 0, byCat = {};
+    var income = 0, refunds = 0, byCat = {};
     list.forEach(function (t) {
       var amt = Number(t.amount) || 0;
       var cat = categoryOf(t);
-      if (amt > 0) { if (!NOT_SPEND[cat] || cat === 'Income') income += amt; return; }
+      if (amt > 0) {
+        // Money back from a shop (a refund) makes that category's spending
+        // smaller. It isn't pay, so it mustn't count as income.
+        if (isSpendCat(cat)) { byCat[cat] = (byCat[cat] || 0) - amt; refunds += amt; return; }
+        if (!NOT_SPEND[cat] || cat === 'Income') income += amt;
+        return;
+      }
       if (NOT_SPEND[cat]) return;               // own-money moves don't count as spending
-      out += Math.abs(amt);
       byCat[cat] = (byCat[cat] || 0) + Math.abs(amt);
     });
-    return { out: out, income: income, byCat: byCat };
+    // A refund bigger than what was spent in that category (e.g. you bought
+    // it last month) can't make spending negative — it just clears it.
+    var out = 0;
+    Object.keys(byCat).forEach(function (c) {
+      if (byCat[c] <= 0.005) delete byCat[c]; else out += byCat[c];
+    });
+    return { out: out, income: income, refunds: refunds, byCat: byCat };
   }
   function netPosition() {
     if (!cache.accounts || !cache.accounts.length) return null;
@@ -453,14 +489,22 @@
 
     Promise.all([
       relayGet('/accounts'),
-      relayGet('/transactions?start=' + encodeURIComponent(since.toISOString()))
+      relayGet('/transactions?start=' + encodeURIComponent(since.toISOString())),
+      // Pending is a bonus: an older relay without it (or a hiccup) must
+      // never stop the rest updating, so failures here just mean "none".
+      relayGet('/transactions/pending').then(function (b) { return { ok: true, body: b }; },
+                                              function () { return { ok: false }; })
     ]).then(function (res) {
       var accounts = res[0] && res[0].items ? res[0].items : (Array.isArray(res[0]) ? res[0] : []);
       var txs = res[1] && res[1].items ? res[1].items : [];
-      cache = { accounts: accounts, transactions: txs, syncedAt: new Date().toISOString() };
+      var pend = res[2].ok && res[2].body && res[2].body.items ? res[2].body.items : [];
+      pend = pend.map(function (t) { return Object.assign({}, t, { _pending: true }); });
+      cache = { accounts: accounts, transactions: txs, pending: pend,
+                pendingAvailable: res[2].ok, truncated: !!(res[1] && res[1].truncated),
+                syncedAt: new Date().toISOString() };
       store.set('cache', cache);
       publishSummary();
-      toast('Updated — ' + txs.length + ' transactions');
+      toast('Updated — ' + txs.length + ' transactions' + (pend.length ? ' + ' + pend.length + ' pending' : ''));
     }).catch(function (e) {
       lastError = e.message || String(e);
       toast('Could not update');
@@ -489,6 +533,8 @@
           netPositionNzd: np === null ? null : Math.round(np),
           topCategory: top,
           accountCount: (cache.accounts || []).length,
+          pendingSpend: Math.round(pendingOutIn(r)),
+          budgetsOver: SPEND_CATS.filter(function (c) { return budgetFor(c) && (t.byCat[c] || 0) > budgetFor(c); }),
           lastSyncedAt: cache.syncedAt
         }
       });
@@ -542,6 +588,14 @@
     if (!cache.syncedAt) {
       html += '<div class="banner warn">No data yet — tap Update below to pull it in.</div>';
     }
+    if (cache.syncedAt && cache.pendingAvailable === false) {
+      html += '<div class="banner warn">Recent card purchases that haven\'t cleared yet aren\'t included — ' +
+              'your relay needs the latest worker code to fetch them.</div>';
+    }
+    if (cache.truncated) {
+      html += '<div class="banner warn">Not all of your history came through (too many transactions). ' +
+              'Lower "How much history to pull" in Settings.</div>';
+    }
 
     html += '<div class="card hero">' +
               '<div class="lbl">' + (hasIncome
@@ -550,6 +604,7 @@
               '<div class="big' + (heroVal < 0 ? ' neg' : '') + '">' + money(heroVal) + '</div>' +
               '<div class="note">' +
                 (hasIncome ? money(t.out) + ' spent of ' + money(t.income) + '<br>' : '') +
+                (pendingOutIn(r) > 0 ? 'includes ' + money(pendingOutIn(r)) + ' still clearing<br>' : '') +
                 (left > 0
                   ? left + (left === 1 ? ' day to go' : ' days to go') +
                     (r.nextLabel ? ' · ' + esc(r.nextLabel) : '')
@@ -604,6 +659,59 @@
     if ($('syncBtn')) $('syncBtn').addEventListener('click', sync);
   }
 
+  /* ---- budgets ---- */
+  function budgetFor(cat) {
+    var m = Number(budgets[cat]) || 0;
+    if (!m) return 0;
+    return settings.period === 'fortnight' && settings.anchor ? m * 12 / 26 : m;
+  }
+  // Where a category is heading by the end of the period, at the pace so far.
+  function projectedFor(spent, r) {
+    return spent + (spent / daysElapsedIn(r)) * daysLeftIn(r);
+  }
+  function budgetRowHtml(c, spent, r) {
+    var b = budgetFor(c);
+    var proj = projectedFor(spent, r);
+    var pct = b ? Math.min(100, Math.round(spent / b * 100)) : 0;
+    var over = spent > b, heading = !over && proj > b * 1.02;
+    var colour = over ? 'var(--danger)' : (heading ? 'var(--gold)' : 'var(--good)');
+    var note = over ? money(spent - b) + ' over'
+             : heading ? 'on track for ' + money(proj) + ' — ' + money(proj - b) + ' over'
+             : money(b - spent) + ' left';
+    return '<div class="catrow"><div class="top">' +
+             '<span class="cn">' + esc(c) + '</span>' +
+             '<span class="cv">' + money(spent) + '<span class="cp">of ' + money(b) + '</span></span>' +
+           '</div><div class="track"><div class="fill" style="width:' + pct + '%;background:' + colour + ';"></div></div>' +
+           '<div class="bnote" style="color:' + (over || heading ? colour : 'var(--muted)') + ';">' + note + '</div></div>';
+  }
+  function openBudgetSheet() {
+    var fort = settings.period === 'fortnight' && settings.anchor;
+    $('sheet').innerHTML =
+      '<h3>Monthly budgets</h3>' +
+      '<div class="sub">Leave a category blank for no budget.' +
+        (fort ? ' You\'re on a fortnightly cycle, so each is shown as its fortnight share (x 12 ÷ 26).' : '') + '</div>' +
+      SPEND_CATS.map(function (c) {
+        return '<div class="brow"><span>' + esc(c) + '</span>' +
+                 '<input type="number" inputmode="decimal" min="0" data-b="' + esc(c) + '" placeholder="—" value="' +
+                   (budgets[c] ? esc(budgets[c]) : '') + '"></div>';
+      }).join('') +
+      '<button class="btn primary" id="saveBudgets" style="margin-top:14px;">Save budgets</button>' +
+      '<button class="btn ghost small" id="closeSheet" style="margin-top:8px;">Cancel</button>';
+    $('scrim').classList.add('open');
+    $('saveBudgets').addEventListener('click', function () {
+      var nb = {};
+      Array.prototype.forEach.call($('sheet').querySelectorAll('[data-b]'), function (inp) {
+        var v = Math.round(Number(inp.value) || 0);
+        if (v > 0) nb[inp.dataset.b] = v;
+      });
+      budgets = nb; store.set('budgets', budgets);
+      $('scrim').classList.remove('open');
+      publishSummary(); render();
+      toast(Object.keys(nb).length ? 'Budgets saved' : 'Budgets cleared');
+    });
+    $('closeSheet').addEventListener('click', function () { $('scrim').classList.remove('open'); });
+  }
+
   function renderSpending() {
     var el = $('screen-spending');
     if (!settings.relayUrl || !settings.relayKey) { el.innerHTML = notSetUpHtml(); return; }
@@ -620,6 +728,21 @@
                    ' – ' + r.end.toLocaleDateString(undefined,{day:'numeric',month:'short'}) +
                    (r.nextLabel ? ' · ' + esc(r.nextLabel) : '') + '</div>' +
                '</div>';
+
+    var budgeted = SPEND_CATS.filter(function (c) { return budgetFor(c) > 0; });
+    if (budgeted.length) {
+      var bTotal = 0, bSpent = 0;
+      budgeted.forEach(function (c) { bTotal += budgetFor(c); bSpent += (t.byCat[c] || 0); });
+      html += '<h2 class="sec">Budgets</h2><div class="card">' +
+                budgeted.sort(function (a, b) { return (t.byCat[b] || 0) / budgetFor(b) - (t.byCat[a] || 0) / budgetFor(a); })
+                  .map(function (c) { return budgetRowHtml(c, t.byCat[c] || 0, r); }).join('') +
+                '<div class="btotal">' + money(bSpent) + ' of ' + money(bTotal) + ' budgeted · ' +
+                  daysLeftIn(r) + (daysLeftIn(r) === 1 ? ' day' : ' days') + ' to go</div>' +
+              '</div>' +
+              '<button class="btn ghost small" id="budgetBtn" style="margin-bottom:6px;">Edit budgets</button>';
+    } else {
+      html += '<button class="btn ghost small" id="budgetBtn" style="margin:14px 0 4px;">Set budgets</button>';
+    }
 
     if (!cats.length) {
       html += '<div class="empty">No spending recorded in this period yet.</div>';
@@ -645,13 +768,14 @@
     }
     el.innerHTML = html;
     if ($('tidyBtn')) $('tidyBtn').addEventListener('click', openTidySheet);
+    if ($('budgetBtn')) $('budgetBtn').addEventListener('click', openBudgetSheet);
   }
 
   function renderActivity() {
     var el = $('screen-activity');
     if (!settings.relayUrl || !settings.relayKey) { el.innerHTML = notSetUpHtml(); return; }
 
-    var list = (cache.transactions || []).slice().sort(function (a, b) {
+    var list = allTx().slice().sort(function (a, b) {
       return new Date(b.date).getTime() - new Date(a.date).getTime();
     });
 
@@ -676,8 +800,10 @@
       var name = (t.merchant && t.merchant.name) || t.description || 'Transaction';
       html += '<div class="tx" data-i="' + i + '">' +
                 '<div class="ti"><div class="tn">' + esc(name) + '</div>' +
-                  '<div class="tc"><span class="chip' + (cat === 'Uncategorised' ? ' none' : '') + '">' + esc(cat) + '</span></div></div>' +
-                '<div class="ta' + (amt > 0 ? ' in' : '') + '">' + (amt > 0 ? '+' : '') + moneyExact(amt) + '</div>' +
+                  '<div class="tc"><span class="chip' + (cat === 'Uncategorised' ? ' none' : '') + '">' + esc(cat) + '</span>' +
+                    (t._pending ? ' <span class="chip pend">Pending</span>' : '') +
+                    (amt > 0 && isSpendCat(cat) ? ' <span class="chip">Refund</span>' : '') + '</div></div>' +
+                '<div class="ta' + (amt > 0 ? ' in' : '') + (t._pending ? ' pend' : '') + '">' + (amt > 0 ? '+' : '') + moneyExact(amt) + '</div>' +
               '</div>';
     });
     el.innerHTML = html;
@@ -719,7 +845,7 @@
   /* ---- sorting out everything still uncategorised, shop by shop ---- */
   function uncategorisedGroups() {
     var groups = {};
-    (cache.transactions || []).forEach(function (t) {
+    allTx().forEach(function (t) {
       if (Number(t.amount) >= 0) return;                 // money in isn't spending
       if (categoryOf(t) !== 'Uncategorised') return;
       var k = txKey(t);
@@ -833,7 +959,8 @@
     html += '<div class="card">' +
       '<div style="font-size:12.5px;color:var(--muted);line-height:1.6;">' +
         Object.keys(rules).length + ' category rules learned · ' +
-        (cache.transactions || []).length + ' transactions held · ' + esc(agoText(cache.syncedAt)) +
+        (cache.transactions || []).length + ' transactions held' +
+        ((cache.pending || []).length ? ' (+' + cache.pending.length + ' pending)' : '') + ' · ' + esc(agoText(cache.syncedAt)) +
       '</div>' +
       '<button class="btn danger" id="clearBtn" style="margin-top:10px;">Clear everything stored on this phone</button>' +
     '</div>';
@@ -915,7 +1042,7 @@
         '<button class="btn ghost small" id="cancelClear" style="margin-top:9px;">Cancel</button>';
       $('scrim').classList.add('open');
       $('confirmClear').addEventListener('click', function () {
-        ['settings','cache','rules','summary'].forEach(function (k) {
+        ['settings','cache','rules','summary','budgets'].forEach(function (k) {
           try { localStorage.removeItem(APP_PREFIX + k); } catch (e) {}
         });
         settings = { relayUrl:'', relayKey:'', period:'month', anchor:'', historyDays:90 };

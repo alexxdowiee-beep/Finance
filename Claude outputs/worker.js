@@ -9,7 +9,14 @@
  *
  *  It can never move money. It only reads from Akahu.
  *
- *  ---- WHAT'S NEW: THE BACKUP STORE ----
+ *  ---- WHAT'S NEW (Sept 2026): PENDING TRANSACTIONS ----
+ *
+ *  Adds /transactions/pending so the app can include card
+ *  purchases that haven't cleared yet. To update: open your
+ *  worker on cloudflare.com -> Edit code -> replace everything
+ *  with this file -> Deploy. Secrets and bindings are kept.
+ *
+ *  ---- THE BACKUP STORE ----
  *
  *  You need to give the worker somewhere to keep backups. On
  *  cloudflare.com:
@@ -134,6 +141,14 @@ export default {
     try {
       if (url.pathname === '/accounts') {
         const r = await fetch(AKAHU + '/accounts', { headers: akahu });
+        const body = await r.json().catch(function () { return { error: 'Akahu sent something unreadable.' }; });
+        return json(body, r.status, cors);
+      }
+
+      // Card purchases the bank hasn't finished processing yet. Akahu warns
+      // these can change (date, description) until they settle.
+      if (url.pathname === '/transactions/pending') {
+        const r = await fetch(AKAHU + '/transactions/pending', { headers: akahu });
         const body = await r.json().catch(function () { return { error: 'Akahu sent something unreadable.' }; });
         return json(body, r.status, cors);
       }
