@@ -85,6 +85,7 @@
   .track { height:7px; background: var(--surface2); border-radius:4px; overflow:hidden; }
   .fill { height:100%; background: var(--brand); border-radius:4px; }
   .bnote { font-size:11px; margin-top:4px; font-weight:600; }
+  .fcnote { font-size:11px; color:var(--faint); line-height:1.5; margin:8px 2px 0; text-align:center; }
   .bill { display:flex; align-items:center; gap:11px; padding:10px 0; cursor:pointer; }
   .bill + .bill { border-top:1px solid var(--line); }
   .bill .bi { flex:1; min-width:0; }
@@ -646,8 +647,9 @@
 
     var left = daysLeftIn(r);
     var elapsed = daysElapsedIn(r);
-    var perDay = t.out / elapsed;
-    var projected = t.out + perDay * left;
+    var fc = forecast(r);
+    var perDay = fc.perDay;
+    var projected = fc.total;
 
     // If pay has landed in this period, what's left of it is the number
     // worth waking up to. If it hasn't, fall back to what's gone out.
@@ -691,10 +693,14 @@
 
     if (t.out > 0) {
       html += '<div class="split">' +
-                '<div class="stat"><div class="v out">' + money(perDay) + '</div><div class="l">a day so far</div></div>' +
-                '<div class="stat"><div class="v">' + money(projected) + '</div><div class="l">at this rate by ' +
+                '<div class="stat"><div class="v out">' + money(perDay) + '</div><div class="l">a day, everyday spending</div></div>' +
+                '<div class="stat" id="fcStat"><div class="v">' + money(projected) + '</div><div class="l">likely total by ' +
                   esc(r.end.toLocaleDateString(undefined, { day: 'numeric', month: 'short' })) + '</div></div>' +
-              '</div>';
+              '</div>' +
+              '<div class="fcnote">' + money(t.out) + ' spent so far' +
+                (left > 0 ? ' + ' + money(perDay) + ' a day × ' + left + (left === 1 ? ' day' : ' days') : '') +
+                (fc.upcoming > 0 ? ' + ' + money(fc.upcoming) + ' bills still to come' : '') +
+                '. Regular bills aren\'t counted in the daily pace.</div>';
     }
 
     // Like for like: same point last period, not a whole finished one.
@@ -998,13 +1004,38 @@
     if (!m) return 0;
     return settings.period === 'fortnight' && settings.anchor ? m * 12 / 26 : m;
   }
-  // Where a category is heading by the end of the period, at the pace so far.
-  function projectedFor(spent, r) {
-    return spent + (spent / daysElapsedIn(r)) * daysLeftIn(r);
+  // Where spending is heading by the end of the period.
+  // Everyday spending (shops, food, fuel...) is assumed to carry on at its
+  // daily pace so far. Regular bills are NOT spread across every day — a
+  // power bill paid on the 8th doesn't mean you'll pay it again each day —
+  // so they're counted as paid, plus the ones the app expects before the
+  // period ends. Returns totals overall and per category.
+  function forecast(r) {
+    var bills = detectBills();
+    var billKeys = {};
+    bills.forEach(function (b) { billKeys[b.key] = true; });
+    var list = txInRange(r);
+    var all = totals(list);
+    var everyday = totals(list.filter(function (t) { return !(Number(t.amount) < 0 && billKeys[txKey(t)]); }));
+    var elapsed = daysElapsedIn(r), left = daysLeftIn(r);
+    var upcoming = upcomingIn(r, bills);
+    var upByCat = {};
+    upcoming.forEach(function (u) { upByCat[u.bill.cat] = (upByCat[u.bill.cat] || 0) + u.bill.amount; });
+    var perDay = everyday.out / elapsed;
+    return {
+      perDay: perDay,
+      billsSoFar: Math.max(0, all.out - everyday.out),
+      upcoming: sumUpcoming(upcoming),
+      total: all.out + perDay * left + sumUpcoming(upcoming),
+      forCat: function (c) {
+        var spent = all.byCat[c] || 0;
+        return spent + ((everyday.byCat[c] || 0) / elapsed) * left + (upByCat[c] || 0);
+      }
+    };
   }
-  function budgetRowHtml(c, spent, r) {
+  function budgetRowHtml(c, spent, r, fc) {
     var b = budgetFor(c);
-    var proj = projectedFor(spent, r);
+    var proj = fc.forCat(c);
     var pct = b ? Math.min(100, Math.round(spent / b * 100)) : 0;
     var over = spent > b, heading = !over && proj > b * 1.02;
     var colour = over ? 'var(--danger)' : (heading ? 'var(--gold)' : 'var(--good)');
@@ -1064,12 +1095,13 @@
 
     html += owedHtml(r);
     var budgeted = SPEND_CATS.filter(function (c) { return budgetFor(c) > 0; });
+    var fc = forecast(r);
     if (budgeted.length) {
       var bTotal = 0, bSpent = 0;
       budgeted.forEach(function (c) { bTotal += budgetFor(c); bSpent += (t.byCat[c] || 0); });
       html += '<h2 class="sec">Budgets</h2><div class="card">' +
                 budgeted.sort(function (a, b) { return (t.byCat[b] || 0) / budgetFor(b) - (t.byCat[a] || 0) / budgetFor(a); })
-                  .map(function (c) { return budgetRowHtml(c, t.byCat[c] || 0, r); }).join('') +
+                  .map(function (c) { return budgetRowHtml(c, t.byCat[c] || 0, r, fc); }).join('') +
                 '<div class="btotal">' + money(bSpent) + ' of ' + money(bTotal) + ' budgeted · ' +
                   daysLeftIn(r) + (daysLeftIn(r) === 1 ? ' day' : ' days') + ' to go</div>' +
               '</div>' +
