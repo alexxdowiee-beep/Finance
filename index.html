@@ -85,12 +85,23 @@
   .track { height:7px; background: var(--surface2); border-radius:4px; overflow:hidden; }
   .fill { height:100%; background: var(--brand); border-radius:4px; }
   .bnote { font-size:11px; margin-top:4px; font-weight:600; }
-  .bill { display:flex; align-items:center; gap:11px; padding:10px 0; border-bottom:1px solid var(--line); cursor:pointer; }
+  .bill { display:flex; align-items:center; gap:11px; padding:10px 0; cursor:pointer; }
+  .bill + .bill { border-top:1px solid var(--line); }
   .bill .bi { flex:1; min-width:0; }
   .bill .bn { font-size:13.5px; font-weight:600; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .bill .bw { font-size:10.5px; color:var(--muted); margin-top:3px; font-weight:600; }
   .bill .bw.now { color:var(--gold); }
   .bill .ba { font-family: var(--font-display); font-size:15px; font-variant-numeric: tabular-nums; white-space:nowrap; }
+  .fold { display:flex; align-items:center; gap:8px; width:100%; background:none; border:none; color:var(--ink);
+          padding:22px 0 10px; cursor:pointer; font:inherit; text-align:left; }
+  .fold .ft { font-family: var(--font-display); font-size:13px; text-transform:uppercase; letter-spacing:0.08em; color:var(--muted); }
+  .fold .fs { margin-left:auto; font-size:12px; font-weight:700; color:var(--ink); font-variant-numeric: tabular-nums; }
+  .fold .fc { color:var(--muted); transition: transform .15s; transform: rotate(-90deg); }
+  .fold.open .fc { transform: none; }
+  .chips { display:flex; flex-wrap:wrap; gap:6px; margin-top:8px; }
+  .pchip { background:var(--surface2); border:1px solid var(--line); color:var(--ink); border-radius:20px; padding:6px 10px; font:inherit; font-size:11.5px; cursor:pointer; }
+  .pchip b { color:var(--good); font-weight:700; }
+  .t-row { display:flex; align-items:center; gap:8px; } .t-row input { width:90px; }
   .linkbtn { background:none; border:none; color:var(--brand); font:inherit; font-weight:700; padding:0; cursor:pointer; text-decoration:underline; }
   .btotal { font-size:11.5px; color:var(--muted); border-top:1px solid var(--line); padding-top:11px; margin-top:13px; }
   .brow { display:flex; align-items:center; justify-content:space-between; gap:12px; padding:6px 0; border-bottom:1px solid var(--line); font-size:13.5px; }
@@ -275,6 +286,12 @@
   var budgets = store.get('budgets', {});
   // Shops you've said aren't regular bills, e.g. { 'KMART HORNBY': true }.
   var notBills = store.get('notBills', {});
+  // Bills you split with someone, keyed by the bill's shop, e.g.
+  // { 'ELECTRIC KIWI': { share: 50, from: 'DOWIE', who: 'William', cat: 'Bills & utilities' } }
+  // share = your percentage; from = text on their repayments.
+  var shared = store.get('shared', {});
+  // Which fold-away sections are open. Folded unless you've opened them.
+  var openSections = store.get('openSections', {});
   var syncing = false;
   var lastError = null;
 
@@ -403,8 +420,23 @@
     return c.name;
   }
 
+  // Is this money coming in someone paying you back for a shared bill?
+  function sharedFor(t) {
+    if (!(Number(t.amount) > 0)) return null;
+    var desc = (txKey(t) + ' ' + (t.description || '') + ' ' + (t.merchant && t.merchant.name || '')).toUpperCase();
+    for (var k in shared) {
+      var f = String(shared[k].from || '').trim().toUpperCase();
+      if (f && desc.indexOf(f) !== -1) return shared[k];
+    }
+    return null;
+  }
+
   function categoryOf(t) {
     var key = txKey(t);
+    // A repayment for a shared bill belongs with that bill, so it makes the
+    // bill's category smaller (like a refund) instead of counting as pay.
+    var sh = sharedFor(t);
+    if (sh) return sh.cat || 'Bills & utilities';
     if (rules[key]) return rules[key];                      // what you chose before
     // Moving money between your own accounts isn't spending, and the bank
     // usually tells us so outright.
@@ -684,18 +716,20 @@
                 (np === null ? '–' : money(np)) + '</div>' +
             '</div>';
 
+    html += owedHtml(r);
     if (upcoming.length) {
-      html += '<h2 class="sec">Coming up ' + (r.nextLabel ? 'before payday' : 'this month') + '</h2><div class="card">' +
+      html += foldHtml('upcoming', 'Coming up ' + (r.nextLabel ? 'before payday' : 'this month'),
+                       upcoming.length + ' · ≈ ' + money(upTotal), '<div class="card">' +
         upcoming.slice(0, 8).map(function (u, i) {
           return '<div class="bill" data-u="' + i + '"><div class="bi"><div class="bn">' + esc(u.bill.name) + '</div>' +
                    '<div class="bw' + (u.bill.dueNow && u.date.getTime() === u.bill.next.getTime() ? ' now' : '') + '">' +
                      esc(whenWord(u.date, u.bill.dueNow && u.date.getTime() === u.bill.next.getTime())) +
-                   ' · ' + FREQ_WORD[u.bill.freq] + '</div></div>' +
+                   ' · ' + FREQ_WORD[u.bill.freq] + billSub(u.bill) + '</div></div>' +
                  '<div class="ba">' + billAmt(u.bill) + '</div></div>';
         }).join('') +
         (upcoming.length > 8 ? '<div class="btotal">+ ' + (upcoming.length - 8) + ' more</div>' : '') +
         '<div class="btotal">≈ ' + money(upTotal) + ' still to come · spotted from your history, so check it looks right</div>' +
-      '</div>';
+      '</div>');
     }
 
     html += '<h2 class="sec">Accounts</h2><div class="card">';
@@ -716,6 +750,7 @@
     html += '<button class="btn primary" id="syncBtn">' + (syncing ? 'Updating…' : 'Update now') + '</button>';
     el.innerHTML = html;
     if ($('syncBtn')) $('syncBtn').addEventListener('click', sync);
+    wireFolds(el);
     Array.prototype.forEach.call(el.querySelectorAll('.bill[data-u]'), function (row) {
       row.addEventListener('click', function () { openBillSheet(upcoming[Number(row.dataset.u)].bill); });
     });
@@ -795,8 +830,13 @@
       var dueNow = lateBy > 0;
       if (dueNow) next = today;                           // a few days late — expect it any day
 
+      var sh = shared[k];
+      var full = amount;
+      if (sh) amount = amount * (Number(sh.share) || 100) / 100;
+
       bills.push({
-        key: k, cat: g.cat, freq: freq, amount: amount, variable: variable, next: next, dueNow: dueNow,
+        key: k, cat: g.cat, freq: freq, amount: amount, full: full, shared: sh || null,
+        variable: variable, next: next, dueNow: dueNow,
         name: (last.merchant && last.merchant.name) || last.description || k,
         count: items.length, perMonth: amount * PER_MONTH[freq]
       });
@@ -825,16 +865,125 @@
     return d.toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short' });
   }
   function billAmt(b) { return (b.variable ? '≈ ' : '') + money(b.amount); }
+  function billSub(b) { return b.shared ? ' · your ' + b.shared.share + '% of ' + (b.variable ? '≈ ' : '') + money(b.full) : ''; }
+
+  // For each shared bill: what they should have paid you back this period,
+  // and what's actually come in. Only the gap is shown.
+  function sharedOwed(r) {
+    var out = [];
+    Object.keys(shared).forEach(function (k) {
+      var sh = shared[k], paid = 0, got = 0;
+      txInRange(r).forEach(function (t) {
+        var a = Number(t.amount) || 0;
+        if (a < 0 && txKey(t) === k) paid += -a;
+        else if (a > 0 && sharedFor(t) === sh) got += a;
+      });
+      var expected = paid * (100 - (Number(sh.share) || 100)) / 100;
+      if (expected - got > 1) out.push({ key: k, who: sh.who || 'They', owed: expected - got, expected: expected, got: got });
+    });
+    return out;
+  }
+  function owedHtml(r) {
+    return sharedOwed(r).map(function (o) {
+      return '<div class="banner warn">' + esc(o.who) + ' owes you ' + money(o.owed) + ' for ' + esc(o.key) +
+             (o.got > 0 ? ' (' + money(o.got) + ' of ' + money(o.expected) + ' paid back so far)' : '') + '.</div>';
+    }).join('');
+  }
+
+  // A section that folds away. Header shows a short summary so it's useful
+  // even while folded. Remembered per section.
+  function foldHtml(id, title, summary, body) {
+    var open = !!openSections[id];
+    return '<button class="fold' + (open ? ' open' : '') + '" data-fold="' + id + '">' +
+             '<span class="ft">' + esc(title) + '</span>' +
+             '<span class="fs">' + summary + '</span><span class="fc">▾</span></button>' +
+           (open ? body : '');
+  }
+  function wireFolds(el) {
+    Array.prototype.forEach.call(el.querySelectorAll('[data-fold]'), function (b) {
+      b.addEventListener('click', function () {
+        openSections[b.dataset.fold] = !openSections[b.dataset.fold];
+        store.set('openSections', openSections); render();
+      });
+    });
+  }
+
+  // Recent money coming in, grouped by who it's from — to pick whose
+  // repayments go with a shared bill.
+  function incomingPayers() {
+    var seen = {}, list = [];
+    allTx().slice().sort(function (a, b) { return new Date(b.date) - new Date(a.date); }).forEach(function (t) {
+      if (!(Number(t.amount) > 0) || t.type === 'TRANSFER') return;
+      var k = txKey(t);
+      if (seen[k]) return;
+      seen[k] = true; list.push({ key: k, amount: Number(t.amount) });
+    });
+    return list.slice(0, 8);
+  }
 
   function openBillSheet(b) {
+    var sh = shared[b.key];
+    var payers = incomingPayers();
+    var splitHtml = sh
+      ? '<div class="banner ok">Split with ' + esc(sh.who || 'someone') + ' — you pay ' + sh.share + '%. ' +
+          'Their payments containing “' + esc(sh.from) + '” come off ' + esc(sh.cat) + ' instead of counting as income.</div>' +
+        '<button class="btn ghost small" id="unsplitBtn">Stop splitting this bill</button>'
+      : '<h2 class="sec" style="margin-top:4px;">Split this bill</h2>' +
+        '<div class="field"><label>Who pays you back</label><input type="text" id="spWho" placeholder="e.g. William"></div>' +
+        '<div class="field"><label>Your share</label><div class="t-row"><input type="number" id="spShare" min="1" max="99" value="50"><span>%</span></div></div>' +
+        '<div class="field"><label>Their payments show on your statement as</label>' +
+          '<input type="text" id="spFrom" placeholder="e.g. DOWIE">' +
+          (payers.length ? '<div class="chips">' + payers.map(function (p) {
+              return '<button class="pchip" data-from="' + esc(p.key) + '">' + esc(p.key) + ' <b>+' + money(p.amount) + '</b></button>';
+            }).join('') + '</div>' : '') +
+          '<div class="hint" id="spMatch">Tap one of your recent incoming payments above, or type part of the name.</div></div>' +
+        '<button class="btn primary" id="splitBtn">Split bill</button>';
     $('sheet').innerHTML =
       '<h3>' + esc(b.name) + '</h3>' +
-      '<div class="sub">' + FREQ_WORD[b.freq] + ' · ' + billAmt(b) + ' · seen ' + b.count + ' times' +
+      '<div class="sub">' + FREQ_WORD[b.freq] + ' · ' + billAmt(b) + billSub(b) + ' · seen ' + b.count + ' times' +
         '<br>Next expected ' + esc(whenWord(b.next, b.dueNow)) +
         (b.variable ? '<br>The amount changes, so this is an average of the last few.' : '') + '</div>' +
-      '<button class="btn ghost small" id="notBillBtn">This isn\'t a regular bill</button>' +
+      splitHtml +
+      '<button class="btn ghost small" id="notBillBtn" style="margin-top:14px;">This isn\'t a regular bill</button>' +
       '<button class="btn ghost small" id="closeSheet" style="margin-top:8px;">Close</button>';
     $('scrim').classList.add('open');
+
+    function countMatches(f) {
+      f = String(f || '').trim().toUpperCase();
+      if (f.length < 3) return null;
+      return allTx().filter(function (t) {
+        if (!(Number(t.amount) > 0)) return false;
+        return (txKey(t) + ' ' + (t.description || '') + ' ' + (t.merchant && t.merchant.name || '')).toUpperCase().indexOf(f) !== -1;
+      });
+    }
+    function showMatches() {
+      var m = countMatches($('spFrom').value);
+      $('spMatch').textContent = m === null ? 'Type at least 3 letters.'
+        : m.length ? 'Matches ' + m.length + ' payment' + (m.length === 1 ? '' : 's') + ' in your history: ' +
+            m.slice(0, 4).map(function (t) { return money(Number(t.amount)); }).join(', ') + (m.length > 4 ? '…' : '')
+        : 'No payments match that yet — fine if they haven\'t paid you back before.';
+    }
+    if ($('spFrom')) {
+      $('spFrom').addEventListener('input', showMatches);
+      Array.prototype.forEach.call($('sheet').querySelectorAll('.pchip'), function (c) {
+        c.addEventListener('click', function () { $('spFrom').value = c.dataset.from; showMatches(); });
+      });
+      $('splitBtn').addEventListener('click', function () {
+        var from = $('spFrom').value.trim().toUpperCase();
+        var share = Math.round(Number($('spShare').value) || 0);
+        if (from.length < 3) { toast('Say how their payments show up'); return; }
+        if (share < 1 || share > 99) { toast('Your share should be 1–99%'); return; }
+        shared[b.key] = { share: share, from: from, who: $('spWho').value.trim() || 'They', cat: b.cat };
+        store.set('shared', shared);
+        $('scrim').classList.remove('open'); publishSummary(); render();
+        toast('Split — you pay ' + share + '%');
+      });
+    }
+    if ($('unsplitBtn')) $('unsplitBtn').addEventListener('click', function () {
+      delete shared[b.key]; store.set('shared', shared);
+      $('scrim').classList.remove('open'); publishSummary(); render();
+      toast('No longer split');
+    });
     $('notBillBtn').addEventListener('click', function () {
       notBills[b.key] = true; store.set('notBills', notBills);
       $('scrim').classList.remove('open'); publishSummary(); render();
@@ -913,6 +1062,7 @@
                    (r.nextLabel ? ' · ' + esc(r.nextLabel) : '') + '</div>' +
                '</div>';
 
+    html += owedHtml(r);
     var budgeted = SPEND_CATS.filter(function (c) { return budgetFor(c) > 0; });
     if (budgeted.length) {
       var bTotal = 0, bSpent = 0;
@@ -954,18 +1104,19 @@
     var hidden = Object.keys(notBills).length;
     if (bills.length || hidden) {
       var perMonth = bills.reduce(function (s, b) { return s + b.perMonth; }, 0);
-      html += '<h2 class="sec">Regular payments</h2><div class="card">' +
+      html += foldHtml('regular', 'Regular payments', bills.length + ' · ≈ ' + money(perMonth) + '/mo', '<div class="card">' +
         bills.map(function (b, i) {
           return '<div class="bill" data-b="' + i + '"><div class="bi"><div class="bn">' + esc(b.name) + '</div>' +
-                   '<div class="bw">' + FREQ_WORD[b.freq] + ' · next ' + esc(whenWord(b.next, b.dueNow)) + '</div></div>' +
+                   '<div class="bw">' + FREQ_WORD[b.freq] + ' · next ' + esc(whenWord(b.next, b.dueNow)) + billSub(b) + '</div></div>' +
                  '<div class="ba">' + billAmt(b) + '</div></div>';
         }).join('') +
         '<div class="btotal">' + (bills.length ? '≈ ' + money(perMonth) + ' a month in regular payments. Tap one that isn\'t really a bill to hide it.' : 'Nothing regular spotted.') +
           (hidden ? ' <button class="linkbtn" id="unhideBills">Show ' + hidden + ' hidden</button>' : '') + '</div>' +
-      '</div>';
+      '</div>');
     }
 
     el.innerHTML = html;
+    wireFolds(el);
     Array.prototype.forEach.call(el.querySelectorAll('.bill[data-b]'), function (row) {
       row.addEventListener('click', function () { openBillSheet(bills[Number(row.dataset.b)]); });
     });
@@ -1007,7 +1158,7 @@
                 '<div class="ti"><div class="tn">' + esc(name) + '</div>' +
                   '<div class="tc"><span class="chip' + (cat === 'Uncategorised' ? ' none' : '') + '">' + esc(cat) + '</span>' +
                     (t._pending ? ' <span class="chip pend">Pending</span>' : '') +
-                    (amt > 0 && isSpendCat(cat) ? ' <span class="chip">Refund</span>' : '') + '</div></div>' +
+                    (amt > 0 && isSpendCat(cat) ? ' <span class="chip">' + (sharedFor(t) ? 'Paid back' : 'Refund') + '</span>' : '') + '</div></div>' +
                 '<div class="ta' + (amt > 0 ? ' in' : '') + (t._pending ? ' pend' : '') + '">' + (amt > 0 ? '+' : '') + moneyExact(amt) + '</div>' +
               '</div>';
     });
@@ -1247,7 +1398,7 @@
         '<button class="btn ghost small" id="cancelClear" style="margin-top:9px;">Cancel</button>';
       $('scrim').classList.add('open');
       $('confirmClear').addEventListener('click', function () {
-        ['settings','cache','rules','summary','budgets','notBills'].forEach(function (k) {
+        ['settings','cache','rules','summary','budgets','notBills','shared','openSections'].forEach(function (k) {
           try { localStorage.removeItem(APP_PREFIX + k); } catch (e) {}
         });
         settings = { relayUrl:'', relayKey:'', period:'month', anchor:'', historyDays:90 };
