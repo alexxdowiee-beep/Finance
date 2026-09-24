@@ -199,9 +199,9 @@
   </main>
 
   <nav class="tabbar">
-    <button class="tab active" data-screen="overview"><span class="ic">&#9673;</span><span class="lb">Overview</span></button>
+    <button class="tab active" data-screen="overview"><span class="ic">&#8962;</span><span class="lb">Home</span></button>
     <button class="tab" data-screen="spending"><span class="ic">&#9650;</span><span class="lb">Spending</span></button>
-    <button class="tab" data-screen="activity"><span class="ic">&#8801;</span><span class="lb">Activity</span></button>
+    <button class="tab" data-screen="activity"><span class="ic">&#8801;</span><span class="lb">History</span></button>
     <button class="tab" data-screen="settings"><span class="ic">&#9881;</span><span class="lb">Settings</span></button>
   </nav>
 </div>
@@ -210,6 +210,18 @@
 <div class="toast" id="toast"></div>
 
 <script>
+
+  // Shared date format across all apps (NZ style): "Thu 24 Sep", "24 Sep", "24 September", "Thursday"
+  function fmtDate(d, opt) {
+    var DS = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'], DL = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
+    var MS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+    var ML = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+    opt = opt || {}; var out = [];
+    if (opt.weekday) out.push(opt.weekday === 'long' ? DL[d.getDay()] : DS[d.getDay()]);
+    if (opt.day) out.push(d.getDate());
+    if (opt.month) out.push(opt.month === 'long' ? ML[d.getMonth()] : MS[d.getMonth()]);
+    return out.join(' ');
+  }
 (function () {
   "use strict";
 
@@ -330,7 +342,7 @@
         start.setHours(0,0,0,0);
         var end = new Date(start.getTime() + ms - 1);
         return { start: start, end: end, label: 'this fortnight',
-                 nextLabel: 'Next pay ' + new Date(start.getTime() + ms).toLocaleDateString(undefined,{day:'numeric',month:'short'}) };
+                 nextLabel: 'Next pay ' + fmtDate(new Date(start.getTime() + ms), {day:'numeric',month:'short'}) };
       }
     }
     var s = new Date(); s.setDate(1); s.setHours(0,0,0,0);
@@ -715,7 +727,7 @@
       html += '<div class="split">' +
                 '<div class="stat"><div class="v out">' + money(perDay) + '</div><div class="l">a day, everyday spending</div></div>' +
                 '<div class="stat" id="fcStat"><div class="v">' + money(projected) + '</div><div class="l">likely total by ' +
-                  esc(r.end.toLocaleDateString(undefined, { day: 'numeric', month: 'short' })) + '</div></div>' +
+                  esc(fmtDate(r.end, { day: 'numeric', month: 'short' })) + '</div></div>' +
               '</div>' +
               '<div class="fcnote">' + money(t.out) + ' spent so far' +
                 (left > 0 ? ' + ' + money(perDay) + ' a day × ' + left + (left === 1 ? ' day' : ' days') : '') +
@@ -888,7 +900,7 @@
     var days = Math.round((dayStart(d) - dayStart(new Date())) / DAY);
     if (days === 0) return 'Today';
     if (days === 1) return 'Tomorrow';
-    return d.toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short' });
+    return fmtDate(d, { weekday: 'short', day: 'numeric', month: 'short' });
   }
   function billAmt(b) { return (b.variable ? '≈ ' : '') + money(b.amount); }
   function billSub(b) { return b.shared ? ' · your ' + b.shared.share + '% of ' + (b.variable ? '≈ ' : '') + money(b.full) : ''; }
@@ -1108,8 +1120,8 @@
     var html = '<div class="card hero">' +
                  '<div class="lbl">Spent ' + esc(r.label) + '</div>' +
                  '<div class="big">' + money(t.out) + '</div>' +
-                 '<div class="note">' + r.start.toLocaleDateString(undefined,{day:'numeric',month:'short'}) +
-                   ' – ' + r.end.toLocaleDateString(undefined,{day:'numeric',month:'short'}) +
+                 '<div class="note">' + fmtDate(r.start, {day:'numeric',month:'short'}) +
+                   ' – ' + fmtDate(r.end, {day:'numeric',month:'short'}) +
                    (r.nextLabel ? ' · ' + esc(r.nextLabel) : '') + '</div>' +
                '</div>';
 
@@ -1201,7 +1213,7 @@
     var lastDay = '';
     list.slice(0, 300).forEach(function (t, i) {
       var d = new Date(t.date);
-      var day = d.toLocaleDateString(undefined, { weekday:'short', day:'numeric', month:'short' });
+      var day = fmtDate(d, { weekday:'short', day:'numeric', month:'short' });
       if (day !== lastDay) { html += '<div class="daylbl">' + esc(day) + '</div>'; lastDay = day; }
       var amt = Number(t.amount) || 0;
       var cat = categoryOf(t);
@@ -1228,7 +1240,7 @@
     $('sheet').innerHTML =
       '<h3>' + esc(name) + '</h3>' +
       '<div class="sub">' + moneyExact(Number(t.amount) || 0) + ' · ' +
-        new Date(t.date).toLocaleDateString(undefined,{day:'numeric',month:'long'}) +
+        fmtDate(new Date(t.date), {day:'numeric',month:'long'}) +
         '<br>Choosing a category here also applies it to anything else from ' + esc(txKey(t)) + '.</div>' +
       '<div class="catgrid">' +
         CATEGORIES.map(function (c) {
