@@ -575,6 +575,16 @@
   }
 
   /* ---- the small shared summary, same as the other apps ---- */
+  function cumulativeSpend(start, end) {
+    var out = [], run = 0, d = new Date(start); d.setHours(0, 0, 0, 0);
+    for (var i = 0; i < 40 && d.getTime() <= end.getTime(); i++) {
+      var e = new Date(d); e.setHours(23, 59, 59, 999);
+      run += totals(txInRange({ start: d, end: e })).out;
+      out.push(Math.round(run));
+      d.setDate(d.getDate() + 1);
+    }
+    return out;
+  }
   function publishSummary() {
     try {
       var r = periodRange();
@@ -603,7 +613,19 @@
           upcomingBillsTotal: Math.round(sumUpcoming(up)),
           nextBill: up.length ? { name: up[0].bill.name, date: dstr(up[0].date), amount: Math.round(up[0].bill.amount) } : null,
           budgetsOver: SPEND_CATS.filter(function (c) { return budgetFor(c) && (t.byCat[c] || 0) > budgetFor(c); }),
-          lastSyncedAt: cache.syncedAt
+          lastSyncedAt: cache.syncedAt,
+          // ---- detail for the Dashboard's charts and suggestions ----
+          budgets: (function () {
+            var fc = forecast(r);
+            return SPEND_CATS.filter(function (c) { return budgetFor(c) > 0; }).map(function (c) {
+              return { cat: c, budget: Math.round(budgetFor(c)), spent: Math.round(t.byCat[c] || 0), forecast: Math.round(fc.forCat(c)) };
+            });
+          })(),
+          owed: sharedOwed(r).map(function (o) { return { who: o.who, bill: o.key, amount: Math.round(o.owed) }; }),
+          upcomingBills: up.slice(0, 6).map(function (u) { return { name: u.bill.name, date: dstr(u.date), amount: Math.round(u.bill.amount) }; }),
+          // Running total of spending, day by day, this period and the last one.
+          spendByDay: cumulativeSpend(r.start, new Date(Math.min(Date.now(), r.end.getTime()))),
+          lastPeriodByDay: (function () { var pr = prevRange(r); return cumulativeSpend(pr.start, pr.end); })()
         }
       });
     } catch (e) {}
