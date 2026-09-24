@@ -602,6 +602,8 @@
           periodStart: r.start.toISOString(),
           periodEnd: r.end.toISOString(),
           budgetTotal: Math.round(SPEND_CATS.reduce(function (sum, c) { return sum + budgetFor(c); }, 0)) || null,
+          // spending in just the categories that HAVE a budget — the fair thing to compare budgetTotal with
+          spentInBudgets: Math.round(SPEND_CATS.filter(function (c) { return budgetFor(c) > 0; }).reduce(function (sum, c) { return sum + (t.byCat[c] || 0); }, 0)),
           daysLeftInPeriod: daysLeftIn(r),
           spentThisPeriod: Math.round(t.out),
           incomeThisPeriod: Math.round(t.income),
