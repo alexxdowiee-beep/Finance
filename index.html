@@ -185,6 +185,14 @@
   .tab .ic { line-height:0; padding:4px 14px; }
   .tab .ic .ci { width:22px; height:22px; display:block; }
   .empty-state .emoji .ci { color: var(--ink-soft, var(--muted)); }
+  .setup { margin-top:18px; }
+  .setup-h { font-size:18px; font-weight:800; margin-bottom:4px; }
+  .setup-p { color: var(--muted); font-size:14px; line-height:1.5; margin-bottom:14px; }
+  .setup-step { display:flex; gap:12px; align-items:center; padding:10px 0; border-top:1px solid var(--line); font-size:14px; }
+  .setup-step small { color: var(--muted); font-size:12px; }
+  .setup-n { width:28px; height:28px; border-radius:50%; background: var(--surface2); display:flex; align-items:center; justify-content:center; font-weight:800; flex:none; }
+  .setup-step.done .setup-n { background: var(--good); color: var(--bg); }
+  .setup-foot { color: var(--muted); font-size:12px; text-align:center; margin-top:12px; }
 </style>
 </head>
 <body>
@@ -667,11 +675,28 @@
     return 'synced ' + d + (d === 1 ? ' day ago' : ' days ago');
   }
 
+  // Shown until the relay is set up: a 3-step checklist and one button to Settings.
   function notSetUpHtml() {
-    return '<div class="empty">Forge Finance isn\'t connected yet.<br><br>' +
-           'Open <b>Settings</b> and paste in your relay address and password. ' +
-           'Your Akahu tokens stay on the relay — they never come near this app.</div>';
+    var steps = [
+      { t: 'Relay address', d: 'Paste it into Settings', done: !!settings.relayUrl },
+      { t: 'Password', d: 'The relay password you chose', done: !!settings.relayKey },
+      { t: 'First sync', d: 'Pulls in your accounts and spending', done: false }
+    ];
+    return '<div class="card setup">' +
+             '<div class="setup-h">Connect your bank data</div>' +
+             '<div class="setup-p">Three quick steps and this screen fills with your spending, bills and budgets.</div>' +
+             steps.map(function (s, i) {
+               return '<div class="setup-step' + (s.done ? ' done' : '') + '"><span class="setup-n">' + (s.done ? '\u2713' : (i + 1)) + '</span>' +
+                      '<span><b>' + s.t + '</b><br><small>' + s.d + '</small></span></div>';
+             }).join('') +
+             '<button class="btn primary" data-goto="settings" style="margin-top:14px">Connect</button>' +
+             '<div class="setup-foot">Your bank login stays on the relay \u2014 it never comes near this app.</div>' +
+           '</div>';
   }
+  document.addEventListener('click', function (e) {
+    var g = e.target.closest && e.target.closest('[data-goto]');
+    if (g) switchScreen(g.getAttribute('data-goto'));
+  });
 
   function renderOverview() {
     var el = $('screen-overview');
