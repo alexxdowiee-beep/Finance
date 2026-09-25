@@ -732,10 +732,6 @@
     if (!cache.syncedAt) {
       html += '<div class="banner warn">No data yet — tap Update below to pull it in.</div>';
     }
-    if (cache.syncedAt && cache.pendingAvailable === false) {
-      html += '<div class="banner warn">Recent card purchases that haven\'t cleared yet aren\'t included — ' +
-              'your relay needs the latest worker code to fetch them.</div>';
-    }
     if (cache.truncated) {
       html += '<div class="banner warn">Not all of your history came through (too many transactions). ' +
               'Lower "How much history to pull" in Settings.</div>';
