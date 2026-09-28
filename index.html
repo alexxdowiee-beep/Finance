@@ -189,6 +189,10 @@
   .catgrid { display:grid; grid-template-columns:1fr 1fr; gap:7px; }
   .catgrid button { background: var(--surface2); border:1px solid var(--line); color: var(--ink);
                     border-radius:10px; padding:12px 8px; font-size:13px; font-family:inherit; cursor:pointer; text-align:left; }
+  .cat-now { font-size:13px; color: var(--muted); margin:12px 0 8px; }
+  .cat-now b { color: var(--ink); }
+  .cat-sug { display:flex; justify-content:space-between; align-items:center; width:100%; margin-bottom:10px; padding:13px 14px; border-radius:12px; background: rgba(95,191,110,.10); border:1px dashed rgba(95,191,110,.7); color: var(--ink); font: inherit; font-size:15px; cursor:pointer; }
+  .cat-sug span { font-size:12px; font-weight:700; letter-spacing:.06em; text-transform:uppercase; color: var(--good); }
   .catgrid button.on { background: var(--brand); border-color: var(--brand); color: var(--brand-ink); font-weight:700; }
 
   .toast { position:fixed; left:50%; transform:translateX(-50%); bottom: calc(env(safe-area-inset-bottom,0px) + 78px);
@@ -1352,14 +1356,38 @@
     });
   }
 
+  // A best guess for the re-sort sheet only. It never changes anything by itself.
+  var SUGGEST_RULES = [
+    [/\bRENT\b|MORTGAGE|PROPERTY MANAGE|TENANCY/, 'Rent & mortgage'],
+    [/^Z |\bZ ENERGY|\bBP\b|MOBIL|CALTEX|\bGULL\b|\bNPD\b|WAITOMO|PETROL|FUEL|PARKING|WILSON PARK|\bAT HOP|METRO CARD|UBER(?! ?EATS)/, 'Transport'],
+    [/POWER|ENERGY|ELECTRIC|\bGAS\b|WATERCARE|BROADBAND|INTERNET|FIBRE|COUNCIL|RATES/, 'Bills & utilities'],
+    [/GYM|FITNESS|PHYSIO|DENTAL|DENTIST|DOCTOR|MEDICAL|PHARMAC|CHEMIST|OPTOM/, 'Health'],
+    [/INSUR/, 'Insurance'],
+    [/SALARY|PAYROLL|WAGES|\bIRD\b/, 'Income'],
+    [/TRANSFER|SAVINGS|KIWISAVER/, 'Savings & transfers'],
+    [/CAFE|COFFEE|ESPRESSO|RESTAURANT|\bBAR\b|\bPUB\b|TAKEAWAY|PIZZA|SUSHI|BURGER|KEBAB|UBER ?EATS|DELIVEREASY/, 'Eating out'],
+    [/SUPERMARKET|COUNTDOWN|WOOLWORTHS|PAK ?N ?SAVE|NEW WORLD|FRESH CHOICE|FOUR SQUARE|BUTCHER/, 'Groceries'],
+    [/NETFLIX|SPOTIFY|DISNEY|NEON|YOUTUBE|APPLE\.COM|GOOGLE|ADOBE|MICROSOFT/, 'Subscriptions']
+  ];
+  function suggestCategory(t) {
+    var desc = ((t.description || '') + ' ' + (t.merchant && t.merchant.name || '')).toUpperCase().trim();
+    for (var i = 0; i < SUGGEST_RULES.length; i++) if (SUGGEST_RULES[i][0].test(desc)) return SUGGEST_RULES[i][1];
+    if (t.category && t.category.name) { var a = fromAkahu(t.category); if (CATEGORIES.indexOf(a) !== -1) return a; }
+    return null;
+  }
+
   function openCategorySheet(t) {
     var current = categoryOf(t);
+    var sug = suggestCategory(t);
+    if (sug === current) sug = null;
     var name = (t.merchant && t.merchant.name) || t.description || 'Transaction';
     $('sheet').innerHTML =
       '<h3>' + esc(name) + '</h3>' +
       '<div class="sub">' + moneyExact(Number(t.amount) || 0) + ' · ' +
         fmtDate(new Date(t.date), {day:'numeric',month:'long'}) +
         '<br>Choosing a category here also applies it to anything else from ' + esc(txKey(t)) + '.</div>' +
+      '<div class="cat-now">Now in <b>' + esc(current) + '</b></div>' +
+      (sug ? '<button class="cat-sug" data-cat="' + esc(sug) + '"><span>Suggested</span><b>' + esc(sug) + '</b></button>' : '') +
       '<div class="catgrid">' +
         CATEGORIES.map(function (c) {
           return '<button data-cat="' + esc(c) + '" class="' + (c === current ? 'on' : '') + '">' + esc(c) + '</button>';
