@@ -78,6 +78,26 @@
 
   .catrow { margin-bottom:13px; }
   .catrow.tap { cursor:pointer; }
+  .track.rel { position:relative; overflow:visible; }
+  .prevmark { position:absolute; top:-3px; width:2px; height:calc(100% + 6px); background: var(--ink); opacity:.85; border-radius:1px; }
+  .cmp { font-size:12px; margin-top:5px; color: var(--muted); }
+  .cmp .up { color: var(--gold); } .cmp .dn { color: var(--good); }
+  .cmp-key { font-size:12px; color: var(--muted); margin-top:12px; }
+  .cvis { color: var(--muted); font-size:12px; }
+  .allcats { display:block; width:100%; text-align:center; margin-top:4px; color: var(--brand); font-weight:700; }
+  .sec-head { display:flex; justify-content:space-between; align-items:center; width:100%; background:none; border:none; padding:0; margin:22px 0 10px; color: var(--muted); font-family: var(--font-display); font-size:13px; text-transform:uppercase; letter-spacing:.14em; cursor:pointer; }
+  .sec-head .sh-r { font-family: var(--font-body); letter-spacing:0; text-transform:none; font-size:12px; }
+  .sec-head .fc { display:inline-block; margin-left:6px; transform:rotate(-90deg); transition:transform .15s; }
+  .sec-head .fc.open { transform:none; }
+  .bedit { color: var(--muted); font-family: var(--font-body); font-size:13px; margin-left:8px; }
+  .add-budget { display:block; width:100%; margin:0 0 6px; padding:12px; border:1px dashed var(--line); border-radius:12px; background:none; color: var(--brand); font: inherit; font-size:14px; font-weight:700; cursor:pointer; }
+  .addlist button { display:flex; justify-content:space-between; width:100%; padding:13px 4px; background:none; border:none; border-top:1px solid var(--line); color: var(--ink); font: inherit; font-size:15px; cursor:pointer; }
+  .addlist .al-v { color: var(--muted); font-size:13px; }
+  .one-b { display:flex; align-items:center; gap:8px; margin:16px 0 10px; font-size:22px; }
+  .one-b input { flex:1; min-width:0; font-size:24px; padding:10px 12px; background: var(--surface2); border:1px solid var(--line); border-radius:12px; color: var(--ink); }
+  .one-b .ob-per { color: var(--muted); font-size:14px; }
+  .ob-chips button { padding:8px 12px; margin:0 6px 6px 0; border-radius:999px; background: var(--surface2); border:1px solid var(--line); color: var(--ink); font: inherit; font-size:13px; cursor:pointer; }
+  .ob-remove { color: var(--danger) !important; }
   .catrow .cchev { display:inline-block; color:var(--muted); font-size:12px; margin-right:6px; transform:rotate(-90deg); transition:transform .15s; }
   .catrow.open .cchev { transform:none; }
   .catrow .cnum { font-size:12px; font-weight:700; color:var(--faint); margin-left:6px; }
@@ -213,6 +233,9 @@
   .setup-n { width:28px; height:28px; border-radius:50%; background: var(--surface2); display:flex; align-items:center; justify-content:center; font-weight:800; flex:none; }
   .setup-step.done .setup-n { background: var(--good); color: var(--bg); }
   .setup-foot { color: var(--muted); font-size:12px; text-align:center; margin-top:12px; }
+  .toast.has-undo { display:flex; align-items:center; gap:16px; }
+  .toast.has-undo.show { pointer-events:auto; }
+  .toast-undo { background:none; border:none; padding:0; color: var(--brand); font: inherit; font-weight:800; text-transform:uppercase; letter-spacing:.04em; cursor:pointer; }
 </style>
 </head>
 <body>
@@ -337,13 +360,21 @@
   var openSections = store.get('openSections', {});
   // Which spending categories are opened up (just for this visit).
   var openCats = {};
+  var showAllCats = false, shopIndex = {};
   var syncing = false;
   var lastError = null;
 
   var toastTimer;
-  function toast(msg) {
-    var t = $('toast'); t.textContent = msg; t.classList.add('show');
-    clearTimeout(toastTimer); toastTimer = setTimeout(function () { t.classList.remove('show'); }, 2300);
+  // toast(msg) shows a short message; toast(msg, undoFn) adds an Undo button for 5 seconds.
+  function toast(msg, undo) {
+    var t = $('toast'); t.textContent = msg;
+    if (undo) {
+      var u = document.createElement('button'); u.className = 'toast-undo'; u.textContent = 'Undo';
+      u.addEventListener('click', function () { clearTimeout(toastTimer); t.classList.remove('show'); undo(); });
+      t.appendChild(u);
+    }
+    t.classList.toggle('has-undo', !!undo); t.classList.add('show');
+    clearTimeout(toastTimer); toastTimer = setTimeout(function () { t.classList.remove('show'); }, undo ? 5000 : 2300);
   }
 
   function esc(s) {
@@ -1126,9 +1157,9 @@
     var note = over ? money(spent - b) + ' over'
              : heading ? 'on track for ' + money(proj) + ' — ' + money(proj - b) + ' over'
              : money(b - spent) + ' left';
-    return '<div class="catrow"><div class="top">' +
+    return '<div class="catrow tap" data-editbudget="' + esc(c) + '"><div class="top">' +
              '<span class="cn">' + esc(c) + '</span>' +
-             '<span class="cv">' + money(spent) + '<span class="cp">of ' + money(b) + '</span></span>' +
+             '<span class="cv">' + money(spent) + '<span class="cp">of ' + money(b) + '</span><span class="bedit">\u270e</span></span>' +
            '</div><div class="track"><div class="fill" style="width:' + pct + '%;background:' + colour + ';"></div></div>' +
            '<div class="bnote" style="color:' + (over || heading ? colour : 'var(--muted)') + ';">' + note + '</div></div>';
   }
@@ -1161,6 +1192,68 @@
                   suggest: Math.max(10, Math.ceil(avg / 10) * 10) };   // average, rounded up to the nearest $10
     });
     return { months: ranges.length, basis: basis, labels: ranges.map(function (r) { return r.label; }), cats: cats };
+  }
+
+  // Budgets are stored per MONTH (the Dashboard reads them that way) but you
+  // see and type them per pay period, so on a fortnightly cycle we convert.
+  function periodWordNow() { return settings.period === 'fortnight' && settings.anchor ? 'fortnight' : 'month'; }
+  function perPeriod(monthly) { return periodWordNow() === 'fortnight' ? monthly * 12 / 26 : monthly; }
+  function toMonthly(perP) { return periodWordNow() === 'fortnight' ? perP * 26 / 12 : perP; }
+
+  // Pick a category that doesn't have a budget yet.
+  function openAddBudget() {
+    var sg = budgetSuggestions();
+    var free = SPEND_CATS.filter(function (c) { return !budgetFor(c); })
+      .sort(function (a, b) { return ((sg.cats[b] || {}).avg || 0) - ((sg.cats[a] || {}).avg || 0); });
+    $('sheet').innerHTML = '<h3>Add a budget</h3>' +
+      '<div class="sub">Pick a category. The amount is what you usually spend in it per ' + periodWordNow() + '.</div>' +
+      '<div class="addlist">' + free.map(function (c) {
+        var x = sg.cats[c];
+        return '<button data-pickbudget="' + esc(c) + '"><span>' + esc(c) + '</span><span class="al-v">' +
+                 (x ? '~' + money(perPeriod(x.avg)) : 'no spending yet') + '</span></button>';
+      }).join('') + '</div>' +
+      '<button class="btn ghost small" id="closeSheet" style="margin-top:12px;">Cancel</button>';
+    $('scrim').classList.add('open');
+    Array.prototype.forEach.call($('sheet').querySelectorAll('[data-pickbudget]'), function (b) {
+      b.addEventListener('click', function () { openOneBudget(b.dataset.pickbudget); });
+    });
+    $('closeSheet').addEventListener('click', function () { $('scrim').classList.remove('open'); });
+  }
+
+  // Edit (or remove) the budget for one category.
+  function openOneBudget(c) {
+    var sg = budgetSuggestions(), x = sg.cats[c];
+    var pw = periodWordNow();
+    var cur = budgets[c] ? Math.round(perPeriod(Number(budgets[c]))) : '';
+    var avg = x ? Math.max(10, Math.ceil(perPeriod(x.avg) / 10) * 10) : null;
+    var chips = [];
+    if (avg) chips.push({ v: avg, l: 'Use ' + money(avg) + ' (your average)' });
+    if (avg) [0.9, 1.2].forEach(function (f) { var v = Math.max(10, Math.round(avg * f / 10) * 10); if (v !== avg) chips.push({ v: v, l: money(v) }); });
+    $('sheet').innerHTML = '<h3>' + esc(c) + ' budget</h3>' +
+      '<div class="sub">Per ' + pw + (x ? ' \u00b7 you usually spend about <b>' + money(perPeriod(x.avg)) + '</b>' : '') + '</div>' +
+      '<div class="one-b"><span>$</span><input type="number" inputmode="decimal" min="0" id="oneBudget" value="' + cur + '" placeholder="0"><span class="ob-per">/ ' + pw + '</span></div>' +
+      (chips.length ? '<div class="ob-chips">' + chips.map(function (ch) { return '<button data-obv="' + ch.v + '">' + ch.l + '</button>'; }).join('') + '</div>' : '') +
+      '<button class="btn primary" id="saveOneBudget" style="margin-top:14px;">Save</button>' +
+      (budgets[c] ? '<button class="btn ghost small ob-remove" id="removeOneBudget" style="margin-top:8px;">Remove this budget</button>' : '') +
+      '<button class="btn ghost small" id="closeSheet" style="margin-top:8px;">Cancel</button>';
+    $('scrim').classList.add('open');
+    Array.prototype.forEach.call($('sheet').querySelectorAll('[data-obv]'), function (b) {
+      b.addEventListener('click', function () { $('oneBudget').value = b.dataset.obv; });
+    });
+    var done = function (msg) { store.set('budgets', budgets); $('scrim').classList.remove('open'); publishSummary(); render(); toast(msg); };
+    $('saveOneBudget').addEventListener('click', function () {
+      var v = Number($('oneBudget').value) || 0;
+      if (v <= 0) { $('oneBudget').focus(); toast('Enter an amount, or remove the budget'); return; }
+      budgets[c] = Math.round(toMonthly(v));
+      done(c + ' budget saved');
+    });
+    if ($('removeOneBudget')) $('removeOneBudget').addEventListener('click', function () {
+      var old = budgets[c];
+      delete budgets[c];
+      done(c + ' budget removed');
+      toast(c + ' budget removed', function () { budgets[c] = old; store.set('budgets', budgets); publishSummary(); render(); });
+    });
+    $('closeSheet').addEventListener('click', function () { $('scrim').classList.remove('open'); });
   }
 
   function openBudgetSheet() {
@@ -1232,47 +1325,69 @@
     if (budgeted.length) {
       var bTotal = 0, bSpent = 0;
       budgeted.forEach(function (c) { bTotal += budgetFor(c); bSpent += (t.byCat[c] || 0); });
-      html += '<h2 class="sec">Budgets</h2><div class="card">' +
+      html += '<h2 class="sec">Budgets \u00b7 per ' + periodWordNow() + '</h2><div class="card">' +
                 budgeted.sort(function (a, b) { return (t.byCat[b] || 0) / budgetFor(b) - (t.byCat[a] || 0) / budgetFor(a); })
                   .map(function (c) { return budgetRowHtml(c, t.byCat[c] || 0, r, fc); }).join('') +
                 '<div class="btotal">' + money(bSpent) + ' of ' + money(bTotal) + ' budgeted · ' +
                   daysLeftIn(r) + (daysLeftIn(r) === 1 ? ' day' : ' days') + ' to go</div>' +
-              '</div>' +
-              '<button class="btn ghost small" id="budgetBtn" style="margin-bottom:6px;">Edit budgets</button>';
-    } else {
-      html += '<button class="btn ghost small" id="budgetBtn" style="margin:14px 0 4px;">Set budgets</button>';
+              '</div>';
     }
+    if (budgeted.length < SPEND_CATS.length) html += '<button class="add-budget" id="addBudgetBtn"' + (budgeted.length ? '' : ' style="margin-top:14px;"') + '>+ Add a budget</button>';
 
     if (!cats.length) {
       html += '<div class="empty">No spending recorded in this period yet.</div>';
     } else {
-      html += '<h2 class="sec">Where it went</h2><div class="card">';
-      // Each category opens to show what you actually spent on in it.
-      var catTx = {};
-      periodTx.forEach(function (tx) { var c = categoryOf(tx); if (t.byCat[c] !== undefined) (catTx[c] = catTx[c] || []).push(tx); });
-      html += cats.map(function (c) {
-        var v = t.byCat[c];
-        var pct = t.out ? Math.round(v / t.out * 100) : 0;
-        var open = !!openCats[c];
-        var list = (catTx[c] || []).slice().sort(function (a, b) { return new Date(b.date) - new Date(a.date); });
-        return '<div class="catrow tap' + (open ? ' open' : '') + '" data-opencat="' + esc(c) + '"><div class="top">' +
-                 '<span class="cn"><span class="cchev">\u25BE</span>' + esc(c) + '<span class="cnum">' + list.length + '</span></span>' +
-                 '<span class="cv">' + money(v) + '<span class="cp">' + pct + '%</span></span>' +
-               '</div><div class="track"><div class="fill" style="width:' +
-                 (max ? Math.round(v / max * 100) : 0) + '%;' +
-                 (c === 'Uncategorised' ? 'background:var(--gold);' : '') + '"></div></div></div>' +
-               (open ? '<div class="catlist">' + list.map(function (tx) {
-                  var amt = Number(tx.amount) || 0, i = periodTx.indexOf(tx);
-                  var name = (tx.merchant && tx.merchant.name) || tx.description || 'Transaction';
-                  return '<div class="ctx" data-ctx="' + i + '"><span class="cd">' +
-                           new Date(tx.date).toLocaleDateString(undefined, { day: 'numeric', month: 'short' }) + '</span>' +
-                           '<span class="cname">' + esc(name) +
-                             (tx._pending ? ' <span class="ctag">Pending</span>' : '') +
-                             (amt > 0 ? ' <span class="ctag">' + (sharedFor(tx) ? 'Paid back' : 'Refund') + '</span>' : '') + '</span>' +
-                           '<span class="camt' + (amt > 0 ? ' in' : '') + '">' + (amt > 0 ? '+' : '') + moneyExact(amt) + '</span></div>';
-                }).join('') + '<div class="chint">Tap one to move it to a different category.</div></div>' : '');
-      }).join('');
-      html += '</div>';
+      // Compare each category with the same point in the last period.
+      var prevCat = totals(txInRange(prevSoFar(r))).byCat, pw2 = periodWordNow();
+      var closed = !!openSections.whereClosed;
+      html += '<button class="sec-head" id="whereHead"><span>Where it went</span><span class="sh-r">' + (closed ? money(t.out) + ' \u00b7 ' + cats.length + ' categories ' : '') +
+              '<span class="fc' + (closed ? '' : ' open') + '">\u25BE</span></span></button>';
+      if (!closed) {
+        html += '<div class="card">';
+        var catTx = {};
+        periodTx.forEach(function (tx) { var c = categoryOf(tx); if (t.byCat[c] !== undefined) (catTx[c] = catTx[c] || []).push(tx); });
+        var shown = showAllCats ? cats : cats.slice(0, 3);
+        var scaleMax = Math.max.apply(null, cats.map(function (c) { return Math.max(t.byCat[c], prevCat[c] || 0); }));
+        html += shown.map(function (c) {
+          var v = t.byCat[c], pv = prevCat[c] || 0, diff = v - pv, open = !!openCats[c];
+          var cmp = !pv ? '<span class="vs">new this ' + pw2 + '</span>'
+                  : Math.abs(diff) < 5 ? '<span class="vs">about the same as last ' + pw2 + '</span>'
+                  : '<span class="vs ' + (diff > 0 ? 'up' : 'dn') + '">' + (diff > 0 ? '\u25B2 ' : '\u25BC ') + money(Math.abs(diff)) + ' vs last ' + pw2 + '</span>';
+          // shops that make up this category
+          var shops = {};
+          (catTx[c] || []).forEach(function (tx) {
+            var k = txKey(tx) || 'Other', nm = (tx.merchant && tx.merchant.name) || tx.description || 'Transaction';
+            var sh = shops[k] = shops[k] || { name: nm, n: 0, sum: 0, tx: tx };
+            var amt = Number(tx.amount) || 0;
+            sh.sum -= amt; if (amt < 0) sh.n++;
+            if (new Date(tx.date) > new Date(sh.tx.date)) sh.tx = tx;
+          });
+          var shopList = Object.keys(shops).map(function (k) { return shops[k]; }).sort(function (a, b) { return b.sum - a.sum; });
+          return '<div class="catrow tap' + (open ? ' open' : '') + '" data-opencat="' + esc(c) + '"><div class="top">' +
+                   '<span class="cn"><span class="cchev">\u25BE</span>' + esc(c) + '</span>' +
+                   '<span class="cv">' + money(v) + '</span>' +
+                 '</div><div class="track rel"><div class="fill" style="width:' + (scaleMax ? Math.round(v / scaleMax * 100) : 0) + '%;' +
+                   (c === 'Uncategorised' ? 'background:var(--gold);' : '') + '"></div>' +
+                   (pv ? '<div class="prevmark" style="left:' + Math.min(100, Math.round(pv / scaleMax * 100)) + '%"></div>' : '') + '</div>' +
+                 '<div class="cmp">' + cmp + '</div></div>' +
+                 (open ? '<div class="catlist">' + shopList.slice(0, 6).map(function (sh, i) {
+                    return '<div class="ctx" data-shop="' + esc(c) + '|' + i + '"><span class="cname">' + esc(sh.name) +
+                             (sh.n > 1 ? ' <span class="cvis">\u00b7 ' + sh.n + ' visits</span>' : '') + '</span>' +
+                             '<span class="camt">' + money(sh.sum) + '</span></div>';
+                  }).join('') + (shopList.length > 6 ? '<div class="chint">+ ' + (shopList.length - 6) + ' more \u2014 see History</div>' : '') +
+                  '<div class="chint">Tap a shop to move it to a different category.</div></div>' : '');
+        }).join('');
+        if (cats.length > 3) html += '<button class="linkbtn allcats" id="allCatsBtn">' + (showAllCats ? 'Show top 3' : 'Show all ' + cats.length + ' categories') + '</button>';
+        html += '<div class="cmp-key">White mark = where you were at this point last ' + pw2 + '</div>';
+        // remember shops for the tap handler
+        shopIndex = {};
+        shown.forEach(function (c) {
+          var shops = {};
+          (catTx[c] || []).forEach(function (tx) { var k = txKey(tx) || 'Other'; var sh = shops[k] = shops[k] || { sum: 0, tx: tx }; sh.sum -= Number(tx.amount) || 0; if (new Date(tx.date) > new Date(sh.tx.date)) sh.tx = tx; });
+          shopIndex[c] = Object.keys(shops).map(function (k) { return shops[k]; }).sort(function (a, b) { return b.sum - a.sum; }).map(function (x) { return x.tx; });
+        });
+        html += '</div>';
+      }
       if (t.byCat['Uncategorised']) {
         var n = uncategorisedGroups().length;
         html += '<div class="banner warn">' + money(t.byCat['Uncategorised']) + ' still uncategorised' +
@@ -1300,8 +1415,12 @@
     Array.prototype.forEach.call(el.querySelectorAll('[data-opencat]'), function (row) {
       row.addEventListener('click', function () { var c = row.dataset.opencat; openCats[c] = !openCats[c]; renderSpending(); });
     });
-    Array.prototype.forEach.call(el.querySelectorAll('.ctx[data-ctx]'), function (row) {
-      row.addEventListener('click', function () { openCategorySheet(periodTx[Number(row.dataset.ctx)]); });
+    Array.prototype.forEach.call(el.querySelectorAll('.ctx[data-shop]'), function (row) {
+      row.addEventListener('click', function (e) {
+        e.stopPropagation();
+        var p = row.dataset.shop.split('|'), tx = shopIndex[p[0]] && shopIndex[p[0]][Number(p[1])];
+        if (tx) openCategorySheet(tx);
+      });
     });
     Array.prototype.forEach.call(el.querySelectorAll('.bill[data-b]'), function (row) {
       row.addEventListener('click', function () { openBillSheet(bills[Number(row.dataset.b)]); });
@@ -1310,7 +1429,13 @@
       notBills = {}; store.set('notBills', notBills); publishSummary(); render();
     });
     if ($('tidyBtn')) $('tidyBtn').addEventListener('click', openTidySheet);
-    if ($('budgetBtn')) $('budgetBtn').addEventListener('click', openBudgetSheet);
+    if ($('addBudgetBtn')) $('addBudgetBtn').addEventListener('click', openAddBudget);
+    Array.prototype.forEach.call(el.querySelectorAll('[data-editbudget]'), function (row) {
+      row.addEventListener('click', function () { openOneBudget(row.dataset.editbudget); });
+    });
+    var wh = $('whereHead');
+    if (wh) wh.addEventListener('click', function () { openSections.whereClosed = !openSections.whereClosed; store.set('openSections', openSections); renderSpending(); });
+    if ($('allCatsBtn')) $('allCatsBtn').addEventListener('click', function () { showAllCats = !showAllCats; renderSpending(); });
   }
 
   function renderActivity() {
