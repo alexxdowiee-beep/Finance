@@ -77,6 +77,18 @@
   .acct .bal.neg { color: var(--danger); }
 
   .catrow { margin-bottom:13px; }
+  .catrow.tap { cursor:pointer; }
+  .catrow .cchev { display:inline-block; color:var(--muted); font-size:12px; margin-right:6px; transform:rotate(-90deg); transition:transform .15s; }
+  .catrow.open .cchev { transform:none; }
+  .catrow .cnum { font-size:12px; font-weight:700; color:var(--faint); margin-left:6px; }
+  .catlist { margin:-4px 0 14px 17px; border-left:2px solid var(--line); padding-left:10px; }
+  .ctx { display:flex; align-items:baseline; gap:8px; padding:7px 0; border-bottom:1px solid var(--line); cursor:pointer; }
+  .ctx .cd { font-size:12px; color:var(--muted); font-weight:700; width:48px; flex-shrink:0; }
+  .ctx .cname { flex:1; min-width:0; font-size:13px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .ctx .ctag { font-size:12px; font-weight:700; color:var(--muted); border:1px dashed var(--line); border-radius:10px; padding:1px 5px; }
+  .ctx .camt { font-family: var(--font-display); font-size:14px; font-variant-numeric: tabular-nums; white-space:nowrap; }
+  .ctx .camt.in { color: var(--good); }
+  .chint { font-size:12px; color:var(--faint); padding-top:6px; }
   .catrow:last-child { margin-bottom:0; }
   .catrow .top { display:flex; justify-content:space-between; align-items:baseline; margin-bottom:5px; gap:10px; }
   .catrow .cn { font-size:13px; }
@@ -106,7 +118,11 @@
   .linkbtn { background:none; border:none; color:var(--brand); font:inherit; font-weight:700; padding:0; cursor:pointer; text-decoration:underline; }
   .btotal { font-size:12px; color:var(--muted); border-top:1px solid var(--line); padding-top:11px; margin-top:13px; }
   .brow { display:flex; align-items:center; justify-content:space-between; gap:12px; padding:6px 0; border-bottom:1px solid var(--line); font-size:14px; }
-  .brow input { width:110px; text-align:right; }
+  .brow input[type=number] { width:96px; text-align:right; }
+  .brow > span:first-child { display:flex; flex-direction:column; }
+  .bsug { font-size:12px; color:var(--muted); font-weight:600; margin-top:2px; }
+  .bright { display:flex; align-items:center; gap:6px; }
+  .sugchip { background:var(--surface2); border:1px dashed var(--brand); color:var(--brand); border-radius:14px; padding:5px 8px; font:inherit; font-size:12px; font-weight:700; cursor:pointer; white-space:nowrap; }
 
   .tx { display:flex; align-items:center; gap:11px; padding:12px 2px; border-bottom:1px solid var(--line); cursor:pointer; }
   .tx:last-child { border-bottom:none; }
@@ -166,7 +182,7 @@
   .scrim { position:fixed; inset:0; background: rgba(6,7,8,0.82); z-index:50; display:none; align-items:flex-end; }
   .scrim.open { display:flex; }
   .sheet { background: var(--surface); width:100%; max-width:520px; margin:0 auto; border-radius:20px 20px 0 0;
-           border-top:2px solid var(--brand); padding:20px 20px calc(env(safe-area-inset-bottom,0px)+24px); max-height:82vh; overflow-y:auto; }
+           border-top:2px solid var(--brand); padding:20px 20px calc(env(safe-area-inset-bottom,0px) + 24px); max-height:82vh; overflow-y:auto; }
   .sheet h3 { font-family: var(--font-display); font-weight:400; font-size:17px; text-transform:uppercase;
               letter-spacing:0.05em; margin:0 0 4px; }
   .sheet .sub { font-size:12px; color: var(--muted); margin-bottom:16px; }
@@ -315,6 +331,8 @@
   var shared = store.get('shared', {});
   // Which fold-away sections are open. Folded unless you've opened them.
   var openSections = store.get('openSections', {});
+  // Which spending categories are opened up (just for this visit).
+  var openCats = {};
   var syncing = false;
   var lastError = null;
 
@@ -1110,20 +1128,68 @@
            '</div><div class="track"><div class="fill" style="width:' + pct + '%;background:' + colour + ';"></div></div>' +
            '<div class="bnote" style="color:' + (over || heading ? colour : 'var(--muted)') + ';">' + note + '</div></div>';
   }
+  // What you've actually spent per category in recent whole months, to
+  // suggest a budget. Uses up to the last 3 complete calendar months the
+  // app has history for (Settings -> "How much history to pull").
+  function budgetSuggestions() {
+    var txs = cache.transactions || [];
+    if (!txs.length) return { months: 0, cats: {} };
+    var earliest = txs.reduce(function (m, t) { var d = new Date(t.date).getTime(); return d < m ? d : m; }, Infinity);
+    var ranges = [], now = new Date();
+    for (var k = 1; k <= 3; k++) {
+      var st = new Date(now.getFullYear(), now.getMonth() - k, 1);
+      var en = new Date(now.getFullYear(), now.getMonth() - k + 1, 0, 23, 59, 59, 999);
+      if (st.getTime() >= earliest - 3 * 86400000) ranges.push({ start: st, end: en, label: st.toLocaleDateString(undefined, { month: 'short' }) });
+    }
+    var basis = 'months';
+    if (!ranges.length) {            // under a full month of history: use the last 30 days
+      var s30 = new Date(Date.now() - 30 * 86400000);
+      if (s30.getTime() < earliest) return { months: 0, cats: {} };
+      ranges.push({ start: s30, end: new Date(), label: 'last 30 days' }); basis = 'days';
+    }
+    var per = ranges.map(function (r) { return totals(txInRange(r)).byCat; });
+    var cats = {};
+    SPEND_CATS.forEach(function (c) {
+      var vals = per.map(function (b) { return b[c] || 0; });
+      var avg = vals.reduce(function (a, b) { return a + b; }, 0) / vals.length;
+      if (avg < 1) return;
+      cats[c] = { avg: avg, last: vals[0], hi: Math.max.apply(null, vals),
+                  suggest: Math.max(10, Math.ceil(avg / 10) * 10) };   // average, rounded up to the nearest $10
+    });
+    return { months: ranges.length, basis: basis, labels: ranges.map(function (r) { return r.label; }), cats: cats };
+  }
+
   function openBudgetSheet() {
     var fort = settings.period === 'fortnight' && settings.anchor;
+    var sg = budgetSuggestions();
     $('sheet').innerHTML =
       '<h3>Monthly budgets</h3>' +
       '<div class="sub">Leave a category blank for no budget.' +
-        (fort ? ' You\'re on a fortnightly cycle, so each is shown as its fortnight share (x 12 ÷ 26).' : '') + '</div>' +
+        (fort ? ' You\'re on a fortnightly cycle, so each is shown as its fortnight share (x 12 ÷ 26).' : '') +
+        (Object.keys(sg.cats).length ? '<br><b>Suggestions</b> are your average monthly spend ' +
+          (sg.basis === 'days' ? 'over the last 30 days (not much history yet, so treat them loosely)' : 'over ' + sg.labels.slice().reverse().join(', ')) +
+          ', rounded up to the nearest $10. Tap one to use it.' : '') + '</div>' +
+      (Object.keys(sg.cats).length ? '<button class="btn ghost small" id="fillSuggest" style="margin-bottom:10px;">Fill empty ones with suggestions</button>' : '') +
       SPEND_CATS.map(function (c) {
-        return '<div class="brow"><span>' + esc(c) + '</span>' +
+        var x = sg.cats[c];
+        return '<div class="brow"><span>' + esc(c) +
+                 (x ? '<span class="bsug">avg ' + money(x.avg) + '/mo' + (sg.months > 1 ? ' \u00b7 last ' + money(x.last) : '') + '</span>' : '') + '</span>' +
+                 '<span class="bright">' + (x ? '<button class="sugchip" data-sug="' + esc(c) + '" data-v="' + x.suggest + '">' + money(x.suggest) + '</button>' : '') +
                  '<input type="number" inputmode="decimal" min="0" data-b="' + esc(c) + '" placeholder="—" value="' +
-                   (budgets[c] ? esc(budgets[c]) : '') + '"></div>';
+                   (budgets[c] ? esc(budgets[c]) : '') + '"></span></div>';
       }).join('') +
       '<button class="btn primary" id="saveBudgets" style="margin-top:14px;">Save budgets</button>' +
       '<button class="btn ghost small" id="closeSheet" style="margin-top:8px;">Cancel</button>';
     $('scrim').classList.add('open');
+    var inputFor = function (c) { return Array.prototype.filter.call($('sheet').querySelectorAll('[data-b]'), function (i) { return i.dataset.b === c; })[0]; };
+    Array.prototype.forEach.call($('sheet').querySelectorAll('[data-sug]'), function (b) {
+      b.addEventListener('click', function () { var i = inputFor(b.dataset.sug); if (i) i.value = b.dataset.v; });
+    });
+    if ($('fillSuggest')) $('fillSuggest').addEventListener('click', function () {
+      var n = 0;
+      Object.keys(sg.cats).forEach(function (c) { var i = inputFor(c); if (i && !i.value) { i.value = sg.cats[c].suggest; n++; } });
+      toast(n ? 'Filled ' + n + ' \u2014 check them, then Save' : 'Nothing empty to fill');
+    });
     $('saveBudgets').addEventListener('click', function () {
       var nb = {};
       Array.prototype.forEach.call($('sheet').querySelectorAll('[data-b]'), function (inp) {
@@ -1143,7 +1209,8 @@
     if (!settings.relayUrl || !settings.relayKey) { el.innerHTML = notSetUpHtml(); return; }
 
     var r = periodRange();
-    var t = totals(txInRange(r));
+    var periodTx = txInRange(r);
+    var t = totals(periodTx);
     var cats = Object.keys(t.byCat).sort(function (a, b) { return t.byCat[b] - t.byCat[a]; });
     var max = cats.length ? t.byCat[cats[0]] : 0;
 
@@ -1176,15 +1243,30 @@
       html += '<div class="empty">No spending recorded in this period yet.</div>';
     } else {
       html += '<h2 class="sec">Where it went</h2><div class="card">';
+      // Each category opens to show what you actually spent on in it.
+      var catTx = {};
+      periodTx.forEach(function (tx) { var c = categoryOf(tx); if (t.byCat[c] !== undefined) (catTx[c] = catTx[c] || []).push(tx); });
       html += cats.map(function (c) {
         var v = t.byCat[c];
         var pct = t.out ? Math.round(v / t.out * 100) : 0;
-        return '<div class="catrow"><div class="top">' +
-                 '<span class="cn">' + esc(c) + '</span>' +
+        var open = !!openCats[c];
+        var list = (catTx[c] || []).slice().sort(function (a, b) { return new Date(b.date) - new Date(a.date); });
+        return '<div class="catrow tap' + (open ? ' open' : '') + '" data-opencat="' + esc(c) + '"><div class="top">' +
+                 '<span class="cn"><span class="cchev">\u25BE</span>' + esc(c) + '<span class="cnum">' + list.length + '</span></span>' +
                  '<span class="cv">' + money(v) + '<span class="cp">' + pct + '%</span></span>' +
                '</div><div class="track"><div class="fill" style="width:' +
                  (max ? Math.round(v / max * 100) : 0) + '%;' +
-                 (c === 'Uncategorised' ? 'background:var(--gold);' : '') + '"></div></div></div>';
+                 (c === 'Uncategorised' ? 'background:var(--gold);' : '') + '"></div></div></div>' +
+               (open ? '<div class="catlist">' + list.map(function (tx) {
+                  var amt = Number(tx.amount) || 0, i = periodTx.indexOf(tx);
+                  var name = (tx.merchant && tx.merchant.name) || tx.description || 'Transaction';
+                  return '<div class="ctx" data-ctx="' + i + '"><span class="cd">' +
+                           new Date(tx.date).toLocaleDateString(undefined, { day: 'numeric', month: 'short' }) + '</span>' +
+                           '<span class="cname">' + esc(name) +
+                             (tx._pending ? ' <span class="ctag">Pending</span>' : '') +
+                             (amt > 0 ? ' <span class="ctag">' + (sharedFor(tx) ? 'Paid back' : 'Refund') + '</span>' : '') + '</span>' +
+                           '<span class="camt' + (amt > 0 ? ' in' : '') + '">' + (amt > 0 ? '+' : '') + moneyExact(amt) + '</span></div>';
+                }).join('') + '<div class="chint">Tap one to move it to a different category.</div></div>' : '');
       }).join('');
       html += '</div>';
       if (t.byCat['Uncategorised']) {
@@ -1211,6 +1293,12 @@
 
     el.innerHTML = html;
     wireFolds(el);
+    Array.prototype.forEach.call(el.querySelectorAll('[data-opencat]'), function (row) {
+      row.addEventListener('click', function () { var c = row.dataset.opencat; openCats[c] = !openCats[c]; renderSpending(); });
+    });
+    Array.prototype.forEach.call(el.querySelectorAll('.ctx[data-ctx]'), function (row) {
+      row.addEventListener('click', function () { openCategorySheet(periodTx[Number(row.dataset.ctx)]); });
+    });
     Array.prototype.forEach.call(el.querySelectorAll('.bill[data-b]'), function (row) {
       row.addEventListener('click', function () { openBillSheet(bills[Number(row.dataset.b)]); });
     });
