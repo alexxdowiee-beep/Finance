@@ -16,6 +16,15 @@
  *  worker on cloudflare.com -> Edit code -> replace everything
  *  with this file -> Deploy. Secrets and bindings are kept.
  *
+ *  ---- WHAT'S NEW (Oct 2026): STEPS AND SLEEP ----
+ *
+ *  Adds /health. The "Health Connect Webhook" app on your phone
+ *  POSTs your Samsung Health steps and sleep here (with your
+ *  RELAY_KEY as an X-Relay-Key header), and Forge (steps), Mind
+ *  (sleep) and the Dashboard read them back with a GET. It uses
+ *  the same BACKUPS store, so there's nothing new to set up on
+ *  Cloudflare: replace everything with this file -> Deploy.
+ *
  *  ---- THE BACKUP STORE ----
  *
  *  You need to give the worker somewhere to keep backups. On
@@ -48,6 +57,8 @@ const ALLOWED_ORIGIN = 'https://alexxdowiee-beep.github.io';
 const MAX_PAGES = 20;                       // Akahu paging safety stop
 const MAX_BACKUP_BYTES = 20 * 1024 * 1024;  // refuse anything daft
 const KEEP_SNAPSHOTS_DAYS = 90;
+const HEALTH_KEEP_DAYS = 70;
+const HOME_TZ = 'Pacific/Auckland';           // days are counted in NZ time
 
 export default {
   async fetch(request, env) {
@@ -122,6 +133,38 @@ export default {
         status: 200,
         headers: Object.assign({ 'Content-Type': 'application/json' }, cors)
       });
+    }
+
+    /* ---------------- Steps and sleep (Health Connect) ---------------- */
+    if (url.pathname === '/health') {
+      if (!env.BACKUPS) return json({ error: 'No store connected. Add a KV binding named BACKUPS.' }, 501, cors);
+      let stored;
+      try { stored = JSON.parse((await env.BACKUPS.get('health')) || 'null'); } catch (e) { stored = null; }
+      if (!stored || typeof stored !== 'object') stored = { steps: {}, sleep: {} };
+      stored.steps = stored.steps || {}; stored.sleep = stored.sleep || {};
+
+      if (request.method === 'POST') {
+        let body;
+        try { body = await request.json(); } catch (e) { return json({ error: 'Not valid JSON - nothing saved.' }, 400, cors); }
+        // Keyed by start time, so a record sent twice (or updated later) replaces itself.
+        (body.steps || []).forEach(function (s) {
+          if (s && s.start_time) stored.steps[s.start_time] = { end: s.end_time || null, n: Math.max(0, Number(s.count) || 0) };
+        });
+        (body.sleep || []).forEach(function (s) {
+          if (!s || !s.session_end_time) return;
+          const first = (s.stages || []).map(function (x) { return x.start_time; }).filter(Boolean).sort()[0] || null;
+          stored.sleep[s.session_end_time] = { start: first, secs: Math.max(0, Number(s.duration_seconds) || 0) };
+        });
+        const cutoff = Date.now() - HEALTH_KEEP_DAYS * 864e5;
+        ['steps', 'sleep'].forEach(function (k) {
+          Object.keys(stored[k]).forEach(function (t) { if (new Date(t).getTime() < cutoff) delete stored[k][t]; });
+        });
+        stored.updatedAt = new Date().toISOString();
+        await env.BACKUPS.put('health', JSON.stringify(stored));
+        return json({ ok: true, stepRecords: Object.keys(stored.steps).length, sleepRecords: Object.keys(stored.sleep).length }, 200, cors);
+      }
+      if (request.method === 'GET') return json(healthByDay(stored), 200, cors);
+      return json({ error: 'Use GET or POST.' }, 405, cors);
     }
 
     /* ---------------- Akahu, read only ---------------- */
@@ -201,4 +244,29 @@ function safeEqual(a, b) {
   let diff = 0;
   for (let i = 0; i < a.length; i++) diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
   return diff === 0;
+}
+
+// NZ calendar date (YYYY-MM-DD) for a moment in time.
+function nzDay(t) {
+  return new Intl.DateTimeFormat('en-CA', { timeZone: HOME_TZ, year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(t));
+}
+
+// Turn the stored records into one row per NZ day:
+//   { updatedAt, days: { '2026-10-02': { steps, sleepMin, sleepStart, sleepEnd } } }
+// Steps count on the day their interval falls in (its midpoint). Sleep counts on the
+// day you woke up; if there are two sessions that day (a nap), the longest is "last night".
+function healthByDay(stored) {
+  const days = {};
+  const day = function (d) { return days[d] = days[d] || {}; };
+  Object.keys(stored.steps || {}).forEach(function (start) {
+    const r = stored.steps[start];
+    const mid = r.end ? (new Date(start).getTime() + new Date(r.end).getTime()) / 2 : new Date(start).getTime();
+    const d = day(nzDay(mid));
+    d.steps = (d.steps || 0) + r.n;
+  });
+  Object.keys(stored.sleep || {}).forEach(function (end) {
+    const r = stored.sleep[end], d = day(nzDay(end)), mins = Math.round(r.secs / 60);
+    if (!d.sleepMin || mins > d.sleepMin) { d.sleepMin = mins; d.sleepStart = r.start; d.sleepEnd = end; }
+  });
+  return { updatedAt: stored.updatedAt || null, days: days };
 }
