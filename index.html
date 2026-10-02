@@ -711,6 +711,14 @@
           owed: sharedOwed(r).map(function (o) { return { who: o.who, bill: o.key, amount: Math.round(o.owed) }; }),
           upcomingBills: up.slice(0, 6).map(function (u) { return { name: u.bill.name, date: dstr(u.date), amount: Math.round(u.bill.amount) }; }),
           // Running total of spending, day by day, this period and the last one.
+          // for the Dashboard's weekly review: everyday spending per calendar day, last 70 days
+          spendByDate: (function () {
+            var out = {}, byDay = {};
+            var from = new Date(); from.setHours(0, 0, 0, 0); from.setDate(from.getDate() - 69);
+            txInRange({ start: from, end: new Date() }).forEach(function (tx) { var k = dstr(new Date(tx.date)); (byDay[k] = byDay[k] || []).push(tx); });
+            Object.keys(byDay).forEach(function (k) { out[k] = Math.round(totals(byDay[k]).out); });
+            return out;
+          })(),
           spendByDay: cumulativeSpend(r.start, new Date(Math.min(Date.now(), r.end.getTime()))),
           lastPeriodByDay: (function () { var pr = prevRange(r); return cumulativeSpend(pr.start, pr.end); })()
         }
